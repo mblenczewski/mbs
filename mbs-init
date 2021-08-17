@@ -1,5 +1,12 @@
 #!/bin/sh
 
+SLUGIFY() {
+	echo "$(echo $1 \
+		| tr '[:lower:]' '[:upper:]' \
+		| tr '[:blank:]' '_' \
+		| tr '-' '_')"
+}
+
 USAGE() {
 	echo "Usage: $(basename $0) <project-name>"
 }
@@ -18,25 +25,26 @@ cd "$PROJECT_NAME"
 mkdir include lib out src "test"
 
 # templating include directory
-# templating main.h
-cat <<'EOF' >> include/main.h
-#ifndef MAIN_H
-#define MAIN_H
+# templating <project-name>.h
+HEADER_NAME="$(SLUGIFY $PROJECT_NAME)"
+cat <<EOF >> include/$PROJECT_NAME.h
+#ifndef ${HEADER_NAME}_H
+#define ${HEADER_NAME}_H
 
 int main(int argc, char **argv);
 
-#endif // MAIN_H
+#endif // ${HEADER_NAME}_H
 EOF
 
 # templating src directory
 # templating main.c
-cat <<'EOF' > src/main.c
-#include "main.h"
-
+cat <<EOF > src/main.c
 #include <stdio.h>
 
+#include "$PROJECT_NAME.h"
+
 int main(int argc, char **argv) {
-	printf("Hello, World!\n");
+	printf("Hello, World!\\n");
 
 	return 0;
 }
@@ -156,10 +164,10 @@ EOF
 
 # templating miscellaneous files
 # templating build
-cat <<'EOF' > build
+cat <<EOF > build
 #!/bin/sh
 
-. "$(dirname $0)/common.sh"
+. "\$(dirname \$0)/common.sh"
 
 # target toolchain flags
 CXXFLAGS_EXT="-O3"
@@ -168,31 +176,27 @@ LDFLAGS_EXT=""
 
 
 # compilation
-cd "$SRC"
+cd "\$SRC"
 
-OBJS="$(OBJECTS "$CXXFLAGS_EXT" "$CPPFLAGS_EXT" $(find -name '*.c' -or -name '*.cpp'))"
+SRCS="\$(find -name '*.c' -or -name '*.cpp')"
+OBJECTS "\$CXXFLAGS_EXT" "\$CPPFLAGS_EXT" \$SRCS
 
 
 # linking
-cd "$OUT"
+cd "\$OUT"
 
-EOF
-
-cat <<EOF >> build
-EXECUTABLE $PROJECT_NAME "" "" "\$LDFLAGS_EXT" \$OBJS
-EOF
-
-cat <<'EOF' >> build
+OBJS="\$(find -name '*.o')"
+EXECUTABLE $PROJECT_NAME "\$CXXFLAGS_EXT" "\$CPPFLAGS_EXT" "\$LDFLAGS_EXT" \$OBJS
 
 
 # testing
-cd "$TEST"
+cd "\$TEST"
 
-TEST "$CXXFLAGS_EXT" "$CPPFLAGS_EXT" "$LDFLAGS_EXT" test_example.c
+TEST "\$CXXFLAGS_EXT" "\$CPPFLAGS_EXT" "\$LDFLAGS_EXT" test_example.c
 
 
 # returning to old directory
-cd "$PWD"
+cd "\$PWD"
 EOF
 
 # templating clean
@@ -201,7 +205,7 @@ cat <<'EOF' > clean
 
 . "$(dirname $0)/common.sh"
 
-rm -f $OUT/*
+rm -frv $OUT/*
 EOF
 
 # templating common.sh
@@ -246,8 +250,7 @@ CXXFLAGS="-fPIC"
 CPPFLAGS="-I$INC"
 LDFLAGS="-L$LIB -L$OUT"
 
-# Builds object files from the given sources, and writes the names of the
-# generated object files to stdout
+# Builds object files from the given sources
 # Requires:
 #   CXX CXXFLAGS CPPFLAGS OUT
 # Overwrites:
@@ -259,8 +262,11 @@ OBJECTS() {
 	__OBJ_CPPFLAGS="$2"
 	shift 2
 	for src in $@; do
-		$CXX -o "$OUT/$src.o" $CXXFLAGS $__OBJ_CXXFLAGS $CPPFLAGS $__OBJ_CPPFLAGS -c $src >/dev/null 2>&1
-		printf '%b' "$src.o"
+		[ $VERBOSE ] && echo "mkdir -p $(dirname $OUT/$src)"
+		mkdir -p "$(dirname $OUT/$src)"
+		[ $VERBOSE ] && echo "$CXX -o $OUT/$src.o $CXXFLAGS $__OBJ_CXXFLAGS $CPPFLAGS $__OBJ_CPPFLAGS -c $src"
+		$CXX -o "$OUT/$src.o" $CXXFLAGS $__OBJ_CXXFLAGS $CPPFLAGS $__OBJ_CPPFLAGS -c $src
+		echo "Compiled $src -> $OUT/$src.o"
 	done
 }
 
