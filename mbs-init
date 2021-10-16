@@ -22,7 +22,7 @@ mkdir "$PROJECT_NAME"
 cd "$PROJECT_NAME"
 
 # create common directories
-mkdir include lib out src "test"
+mkdir "include" "lib" "obj" "out" "src" "test"
 
 # templating include directory
 # templating <project-name>.h
@@ -31,13 +31,20 @@ cat <<EOF >> include/$PROJECT_NAME.h
 #ifndef ${HEADER_NAME}_H
 #define ${HEADER_NAME}_H
 
-#include <stdalign.h>
+/* Standard includes */
 #include <assert.h>
+#include <errno.h>
+#include <stdalign.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdnoreturn.h>
+
+/* Wide character support */
+#include <locale.h>
+#include <wchar.h>
+#include <wctype.h>
 
 /* Integral types */
 typedef uint32_t b32;
@@ -47,14 +54,26 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
-typedef int8_t  s8;
-typedef int16_t s16;
-typedef int32_t s32;
-typedef int64_t s64;
+typedef int8_t   s8;
+typedef int16_t  s16;
+typedef int32_t  s32;
+typedef int64_t  s64;
 
-typedef float  f32;
-typedef double f64;
+typedef float    f32;
+typedef double   f64;
 
+/* String types */
+struct str_t {
+	char *str;
+	size_t len;
+};
+
+struct wstr_t {
+	wchar_t *str;
+	size_t len;
+};
+
+/* $PROJECT_NAME definitions */
 int main(int argc, char **argv);
 
 #endif /* ${HEADER_NAME}_H */
@@ -80,6 +99,7 @@ cat <<'EOF' > test/mbs_test.h
 #ifndef MBS_TEST_H
 #define MBS_TEST_H
 
+#include <assert.h>
 #include <stdio.h>
 
 #define TEST_BEGIN() \
@@ -107,36 +127,11 @@ cat <<'EOF' > test/mbs_test.h
 }
 
 /* Assertions */
-#ifdef NDEBUG
+#define ASSERT(condition, message) \
+	assert((message, (condition)));
 
-#define _TEST_ASSERT_IMPL(condition, message, file, line) ((void)0)
-#define _TEST_ASSERT_NE_IMPL(condition, message, file, line) ((void)0)
-
-#else // NDEBUG
-
-#define _TEST_ASSERT_IMPL(condition, message, file, line, func) \
-{ \
-	if (condition) { } else { \
-		printf("(%s:%d) %s: %s - %s\n", file, line, func, #condition, message); \
-		FAIL(); \
-	} \
-}
-
-#define _TEST_ASSERT_NE_IMPL(condition, message, file, line, func) \
-{ \
-	if (condition) { \
-		printf("(%s:%d) %s: %s - %s\n", file, line, func, #condition, message); \
-		FAIL(); \
-	} \
-}
-
-#endif // NDEBUG
-
-#define TEST_ASSERT(condition, message) \
-	_TEST_ASSERT_IMPL(condition, message, __FILE__, __LINE__, __func__)
-
-#define TEST_ASSERT_NE(condition, message) \
-	_TEST_ASSERT_NE_IMPL(condition, message, __FILE__, __LINE__, __func__)
+#define ASSERT_NE(condition, message) \
+	assert((message, !(condition)));
 
 #endif // MBS_TEST_H
 EOF
@@ -145,42 +140,22 @@ EOF
 cat <<'EOF' > test/test_example.c
 #include "mbs_test.h"
 
-// minimal "test" possible
-TEST(test_foo) {
-	PASS();
-}
-
-// using TEST_ASSERT to assert that a condition is true
-TEST(test_bar) {
+TEST(test_example) {
 	int a = 42;
 
-	TEST_ASSERT(a == 42, "a should always have the value of 42");
+	ASSERT(a == 42, "a must be equal to 42");
+	ASSERT_NE(a == 24, "a cannot be equal to 24");
+
+	// FAIL();
 
 	PASS();
-}
-
-// using TEST_ASSERT_NE to assert that a condition is false
-TEST(test_baz) {
-	int a = 42;
-
-	TEST_ASSERT_NE(a != 42, "a should always have the value of 42");
-
-	PASS();
-}
-
-// PASS() will make a test pass, FAIL() will make a test fail
-TEST(test_unused) {
-	FAIL();
 }
 
 // example of including a set of test cases
 int main(void) {
 	TEST_BEGIN();
 
-	TEST_RUN(test_foo);
-	TEST_RUN(test_bar);
-	TEST_RUN(test_baz);
-	//TEST_RUN(test_unused);
+	TEST_RUN(test_example);
 
 	TEST_END();
 }
@@ -194,33 +169,46 @@ cat <<EOF > build
 . "\$(dirname \$0)/common.sh"
 
 # target toolchain flags
-CXXFLAGS_EXT="-O3"
-CPPFLAGS_EXT="-DFOO=1"
-LDFLAGS_EXT=""
+COMMON_CXXFLAGS_EXT=""
+COMMON_CPPFLAGS_EXT=""
+COMMON_LDDFLAGS_EXT=""
+
+DBG_CXXFLAGS_EXT=""
+DBG_CPPFLAGS_EXT=""
+DBG_LDDFLAGS_EXT=""
+
+REL_CXXFLAGS_EXT=""
+REL_CPPFLAGS_EXT=""
+REL_LDDFLAGS_EXT=""
+
+CXXFLAGS_EXT="\$COMMON_CXXFLAGS_EXT \$(REGIME "\$DBG_CXXFLAGS_EXT" "\$REL_CXXFLAGS_EXT")"
+CPPFLAGS_EXT="\$COMMON_CPPFLAGS_EXT \$(REGIME "\$DBG_CPPFLAGS_EXT" "\$REL_CPPFLAGS_EXT")"
+LDDFLAGS_EXT="\$COMMON_LDDFLAGS_EXT \$(REGIME "\$DBG_LDDFLAGS_EXT" "\$REL_LDDFLAGS_EXT")"
+
+[ \$VERBOSE ] && echo "$PROJECT_NAME CXXFLAGS: \$CXXFLAGS_EXT"
+[ \$VERBOSE ] && echo "$PROJECT_NAME CPPFLAGS: \$CPPFLAGS_EXT"
+[ \$VERBOSE ] && echo "$PROJECT_NAME LDDFLAGS: \$LDDFLAGS_EXT"
 
 
 # compilation
-cd "\$SRC"
+SRCS="\$(find "\$SRC" -name '*.c' -or -name '*.cpp')"
+[ \$VERBOSE ] && echo "Sources: \$SRCS"
 
-SRCS="\$(find -name '*.c' -or -name '*.cpp')"
 OBJECTS "\$CXXFLAGS_EXT" "\$CPPFLAGS_EXT" \$SRCS
 
 
 # linking
-cd "\$OUT"
+OBJS="\$(find "\$OBJ" -name '*.o')"
+[ \$VERBOSE ] && echo "Objects: \$OBJS"
 
-OBJS="\$(find -name '*.o')"
 EXECUTABLE $PROJECT_NAME "\$CXXFLAGS_EXT" "\$CPPFLAGS_EXT" "\$LDFLAGS_EXT" \$OBJS
 
 
 # testing
-cd "\$TEST"
+TESTS="\$(find "\$TEST" -name '*.c' -or -name '*.cpp')"
+[ \$VERBOSE ] && echo "Tests: \$TESTS"
 
-TEST "\$CXXFLAGS_EXT" "\$CPPFLAGS_EXT" "\$LDFLAGS_EXT" test_example.c
-
-
-# returning to old directory
-cd "\$PWD"
+TEST "\$CXXFLAGS_EXT" "\$CPPFLAGS_EXT" "\$LDFLAGS_EXT" \$TESTS
 EOF
 
 # templating clean
@@ -237,13 +225,14 @@ cat <<'EOF' > common.sh
 #!/bin/sh
 
 # project root
-PWD="$(pwd)"
+PWD="$(dirname $0)"
 
 # project directory structure
 SRC="$PWD/src"
 INC="$PWD/include"
 LIB="$PWD/lib"
 TEST="$PWD/test"
+OBJ="$PWD/obj"
 OUT="$PWD/out"
 
 # toolchain
@@ -254,6 +243,48 @@ AR=ar
 # toolchain specific flags
 CXX_BIN_FLAGS=""
 CXX_SO_FLAGS="-shared"
+
+# global toolchain flags
+COMMON_CXXFLAGS="-fPIC"
+COMMON_CPPFLAGS="-I$INC"
+COMMON_LDDFLAGS="-L$LIB -L$OUT"
+
+# Returns the correct set of flags based on the compilation regime
+# NOTE: setting multiple regime variables will result in multiple
+#       sets of flags being echoed out
+# Requires:
+#   $DBG $REL
+# Usage:
+#   FLAGS="<common-flags> $(REGIME "<debug-flags>" "<release-flags>")"
+REGIME() {
+	[ $DBG ] && echo "$1"
+	[ $REL ] && echo "$2"
+}
+
+DBG_CXXFLAGS="-Og"
+DBG_CPPFLAGS=""
+DBG_LDDFLAGS=""
+
+REL_CXXFLAGS="-O3"
+REL_CPPFLAGS="-DNDEBUG"
+DBG_LDDFLAGS=""
+
+CXXFLAGS="$COMMON_CXXFLAGS $(REGIME "$DBG_CXXFLAGS" "$REL_CXXFLAGS")"
+CPPFLAGS="$COMMON_CPPFLAGS $(REGIME "$DBG_CPPGLAGS" "$REL_CPPFLAGS")"
+LDDFLAGS="$COMMON_LDDFLAGS $(REGIME "$DBG_LDDFLAGS" "$REL_LDDFLAGS")"
+
+[ $VERBOSE ] && echo "CXXFLAGS: $CXXFLAGS"
+[ $VERBOSE ] && echo "CPPFLAGS: $CPPFLAGS"
+[ $VERBOSE ] && echo "LDDFLAGS: $LDDFLAGS"
+
+# Executes the given command, echoing it out if the VERBOSE variable is defined
+# Overwrites:
+#   __TMP_ERRNO
+# Usage:
+#   EXEC <command...>
+EXEC() {
+	__TMP_ERRNO=$?; [ $VERBOSE ] && echo "$@"; ( exit $__TMP_ERRNO ) && $@
+}
 
 # Echoes the LDFLAGS for the given library
 # Usage:
@@ -269,11 +300,6 @@ INC() {
 	echo "$(pkg-config --cflags $@)"
 }
 
-# global toolchain flags
-CXXFLAGS="-fPIC"
-CPPFLAGS="-I$INC"
-LDFLAGS="-L$LIB -L$OUT"
-
 # Builds object files from the given sources
 # Requires:
 #   CXX CXXFLAGS CPPFLAGS OUT
@@ -286,11 +312,9 @@ OBJECTS() {
 	__OBJ_CPPFLAGS="$2"
 	shift 2
 	for src in $@; do
-		[ $VERBOSE ] && echo "mkdir -p $(dirname $OUT/$src)"
-		mkdir -p "$(dirname $OUT/$src)"
-		[ $VERBOSE ] && echo "$CXX -o $OUT/$src.o $CXXFLAGS $__OBJ_CXXFLAGS $CPPFLAGS $__OBJ_CPPFLAGS -c $src"
-		$CXX -o "$OUT/$src.o" $CXXFLAGS $__OBJ_CXXFLAGS $CPPFLAGS $__OBJ_CPPFLAGS -c $src
-		echo "Compiled $src -> $OUT/$src.o"
+		EXEC mkdir -p "$(dirname $OBJ/$src)"
+		EXEC $CXX -o "$OBJ/$src.o" $CXXFLAGS $__OBJ_CXXFLAGS $CPPFLAGS $__OBJ_CPPFLAGS -c "$src"
+		[ $? -eq 0 ] && echo "Compiled $src -> $OBJ/$src.o"
 	done
 }
 
@@ -307,9 +331,8 @@ EXECUTABLE() {
 	__TGT_CPPFLAGS="$3"
 	__TGT_LDFLAGS="$4"
 	shift 4
-	[ $VERBOSE ] && echo "$CXX $CXX_BIN_FLAGS -o "$OUT/$__TGT_NAME" $@ $CXXFLAGS $__TGT_CXXFLAS $CPPFLAGS $__TGT_CPPFLAGS $LDFLAGS $__TGT_LDFLAGS"
-	$CXX $CXX_BIN_FLAGS -o "$OUT/$__TGT_NAME" $@ $CXXFLAGS $__TGT_CXXFLAS $CPPFLAGS $__TGT_CPPFLAGS $LDFLAGS $__TGT_LDFLAGS
-	echo "Built executable: $OUT/$__TGT_NAME"
+	EXEC $CXX $CXX_BIN_FLAGS -o "$OUT/$__TGT_NAME" $CXXFLAGS $__TGT_CXXFLAS $CPPFLAGS $__TGT_CPPFLAGS $LDFLAGS $__TGT_LDFLAGS $@
+	[ $? -eq 0 ] && echo "Built executable: $OUT/$__TGT_NAME"
 }
 
 # Builds a shared library from the given sources or objects
@@ -318,16 +341,15 @@ EXECUTABLE() {
 # Overwrites:
 #   __TGT_NAME __TGT_CXXFLAGS __TGT_CPPFLAGS __TGT_LDFLAGS
 # Usage:
-#   SHARED <tgt-name> "<tgt-cxxflags>" "<tgt-cppflags>" "<tgt-ldflags>" <sources...>
-SHARED() {
+#   SHAREDLIB <tgt-name> "<tgt-cxxflags>" "<tgt-cppflags>" "<tgt-ldflags>" <sources...>
+SHAREDLIB() {
 	__TGT_NAME=lib$1.so
 	__TGT_CXXFLAGS="$2"
 	__TGT_CPPFLAGS="$3"
 	__TGT_LDFLAGS="$4"
 	shift 4
-	[ $VERBOSE ] && echo "$CXX $CXX_SO_FLAGS -o "$OUT/$__TGT_NAME" $@ $CXXFLAGS $__TGT_CXXFLAS $CPPFLAGS $__TGT_CPPFLAGS $LDFLAGS $__TGT_LDFLAGS"
-	$CXX $CXX_SO_FLAGS -o "$OUT/$__TGT_NAME" $@ $CXXFLAGS $__TGT_CXXFLAS $CPPFLAGS $__TGT_CPPFLAGS $LDFLAGS $__TGT_LDFLAGS
-	echo "Built shared library: $OUT/$__TGT_NAME"
+	EXEC $CXX $CXX_SO_FLAGS -o "$OUT/$__TGT_NAME" $CXXFLAGS $__TGT_CXXFLAS $CPPFLAGS $__TGT_CPPFLAGS $LDFLAGS $__TGT_LDFLAGS $@
+	[ $? -eq 0 ] && echo "Built shared library: $OUT/$__TGT_NAME"
 }
 
 # Builds a static library from the given objects
@@ -336,20 +358,19 @@ SHARED() {
 # Overwrites:
 #   __TGT_NAME
 # Usage:
-#   STATIC <tgt-name> <objects...>
-STATIC() {
+#   STATICLIB <tgt-name> <objects...>
+STATICLIB() {
 	__TGT_NAME=lib$1.a
 	shift 1
-	[ $VERBOSE ] && echo "$AR rcs $OUT/$__TGT_NAME $@"
-	$AR rcs "$OUT/$__TGT_NAME" $@
-	echo "Built static library: $OUT/$__TGT_NAME"
+	EXEC $AR rcs "$OUT/$__TGT_NAME" $@
+	[ $? -eq 0 ] && echo "Built static library: $OUT/$__TGT_NAME"
 }
 
 # Runs the given tests
 # Requires:
 #   CXX CXXFLAGS CPPFLAGS LDFLAGS LIB OUT TEST
 # Overwrites:
-#   __TEST_NAME __TEST_CXXFLAGS __TEST_CPPFLAGS __TEST_LDFLAGS
+#   __TEST_NAME __TEST_CXXFLAGS __TEST_CPPFLAGS __TEST_LDFLAGS __TEST_TMP
 # Usage:
 #   TEST "<test-cxxflags>" "<test-cppflags>" "<test-ldflags>" <tests...>
 TEST() {
@@ -357,23 +378,50 @@ TEST() {
 	__TEST_CPPFLAGS="$2"
 	__TEST_LDFLAGS="$3"
 	shift 3
+	__TEST_TMP=0
 	for test_src in $@; do
 		__TEST_NAME=$test_src.x
-		[ $VERBOSE ] && echo "$CXX -o $OUT/$__TEST_NAME $test_src $CXXFLAGS $__TEST_CXXFLAGS -I$TEST $CPPFLAGS $__TEST_CPPFLAGS $LDFLAGS $__TEST_LDFLAGS"
-		$CXX -o "$OUT/$__TEST_NAME" $test_src $CXXFLAGS $__TEST_CXXFLAGS -I$TEST $CPPFLAGS $__TEST_CPPFLAGS $LDFLAGS $__TEST_LDFLAGS
-		[ $VERBOSE ] && echo "LD_LIBRARY_PATH=$LIB:$OUT:$LD_LIBRARY_PATH $OUT/$__TEST_NAME"
-		LD_LIBRARY_PATH="$LIB:$OUT:$LD_LIBRARY_PATH" "$OUT/$__TEST_NAME"
+		EXEC mkdir -p "$(dirname $OUT/$__TEST_NAME)"
+		EXEC $CXX -o "$OUT/$__TEST_NAME" $test_src -Wno-unused-value $CXXFLAGS $__TEST_CXXFLAGS -I$TEST $CPPFLAGS $__TEST_CPPFLAGS $LDFLAGS $__TEST_LDFLAGS && LD_LIBRARY_PATH="$OUT:$LIB:$LD_LIBRARY_PATH" "$OUT/$__TEST_NAME"
+		[ $? -ne 0 ] && __TEST_TMP=1
 	done
-	echo "Ran tests: $([ $? -eq 0 ] && echo PASS || echo FAIL)"
+	echo "Ran tests: $([ $__TEST_TMP -eq 0 ] && echo PASS || echo FAIL)"
 }
 EOF
 
 # templating .gitignore
 cat <<'EOF' > .gitignore
+obj/
 out/
 EOF
 
+# initialise git repository
+git init
+
 # setting execute permissions
 chmod +x build clean
+
+# create wrapper Makefile
+cat <<EOF > Makefile
+.PHONY: clean debug release run
+
+run: clean debug
+	./out/$PROJECT_NAME
+
+debug: clean
+	DBG=1 ./build
+
+release: clean
+	REL=1 ./build
+
+clean:
+	./clean
+EOF
+
+# create initial README.md
+cat <<EOF > README.md
+# $PROJECT_NAME
+
+EOF
 
 echo "Done!"
