@@ -217,7 +217,11 @@ cat <<'EOF' > clean
 
 . "$(dirname $0)/common.sh"
 
-rm -frv $OUT/*
+if [ $VERBOSE ]; then
+	rm -frv $OBJ/* $OUT/*
+else
+	rm -fr $OBJ/* $OUT/*
+fi
 EOF
 
 # templating common.sh

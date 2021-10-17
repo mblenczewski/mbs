@@ -15,19 +15,23 @@ $ mbs-init example-proj
 # Key:
 #   d - directory   x - executable shell script   f - file
 d /example-proj
+d   /.git
 d   /include
-f     main.h
+f     example-proj.h
 d   /lib
+d   /obj
 d   /out
 d   /src
 f     main.c
 d   /test
 f     test.h
 f     test_example.c
+f   .gitignore
 x   build
 x   clean
 f   common.sh
-f   .gitignore
+f   Makefile
+f   README.md
 ```
 
 ### common.sh
@@ -43,11 +47,12 @@ and runs all tests.
 
 ### clean
 
-This shell script cleans out the `/out` directory.
+This shell script cleans all the generated files.
 
 ### .gitignore
 
-The default `.gitignore` will ignore all files under the `/out` directory.
+The default `.gitignore` will ignore all files under the `/obj` and `/out`
+directories.
 
 ## Usage
 
@@ -62,6 +67,19 @@ To build an mbs project, run the `build` shell script:
 ./build
 ```
 
+The `build` shell script recognises a `VERBOSE=1` flag to show more information
+about the steps its taking, as well as the `DBG=1` and `REL=1` flags to select
+the compilation regime (and include the appropriate toolchain flags):
+```sh
+VERBOSE=1 DBG=1 ./build
+
+REL=1 ./build
+
+# NOTE: this will cause both the debug and release flags to be included,
+#       which might not be what you want
+DBG=1 REL=1 ./build
+```
+
 The `build` shell script does not run any built executables. It exits with a
 non-zero exit code if any tests fail, and should be chained with running the
 executable as follows:
@@ -74,3 +92,7 @@ To clean an mbs project, run the `clean` shell script:
 ./clean
 ```
 
+### Makefile
+Additionally, a very simple Makefile wrapper around the build and clean scripts
+is generated, so instead of running `./build` or `./clean` you can simply call
+`make` with the appropriate target.
