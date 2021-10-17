@@ -249,7 +249,7 @@ CXX_BIN_FLAGS=""
 CXX_SO_FLAGS="-shared"
 
 # global toolchain flags
-COMMON_CXXFLAGS="-fPIC"
+COMMON_CXXFLAGS="-Wall -Wextra -Wpedantic"
 COMMON_CPPFLAGS="-I$INC"
 COMMON_LDDFLAGS="-L$LIB -L$OUT"
 
@@ -265,21 +265,21 @@ REGIME() {
 	[ $REL ] && echo "$2"
 }
 
-DBG_CXXFLAGS="-Og"
+DBG_CXXFLAGS="-Og -ggdb"
 DBG_CPPFLAGS=""
 DBG_LDDFLAGS=""
 
-REL_CXXFLAGS="-O3"
+REL_CXXFLAGS="-O3 -flto"
 REL_CPPFLAGS="-DNDEBUG"
-DBG_LDDFLAGS=""
+REL_LDDFLAGS="-flto"
 
 CXXFLAGS="$COMMON_CXXFLAGS $(REGIME "$DBG_CXXFLAGS" "$REL_CXXFLAGS")"
 CPPFLAGS="$COMMON_CPPFLAGS $(REGIME "$DBG_CPPGLAGS" "$REL_CPPFLAGS")"
 LDDFLAGS="$COMMON_LDDFLAGS $(REGIME "$DBG_LDDFLAGS" "$REL_LDDFLAGS")"
 
-[ $VERBOSE ] && echo "CXXFLAGS: $CXXFLAGS"
-[ $VERBOSE ] && echo "CPPFLAGS: $CPPFLAGS"
-[ $VERBOSE ] && echo "LDDFLAGS: $LDDFLAGS"
+[ $VERBOSE ] && echo "global CXXFLAGS: $CXXFLAGS"
+[ $VERBOSE ] && echo "global CPPFLAGS: $CPPFLAGS"
+[ $VERBOSE ] && echo "global LDDFLAGS: $LDDFLAGS"
 
 # Executes the given command, echoing it out if the VERBOSE variable is defined
 # Overwrites:
