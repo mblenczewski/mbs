@@ -25,11 +25,10 @@ cd "$PROJECT_NAME"
 mkdir "include" "lib" "obj" "out" "src" "test"
 
 # templating include directory
-# templating <project-name>.h
-HEADER_NAME="$(SLUGIFY $PROJECT_NAME)"
-cat <<EOF >> include/$PROJECT_NAME.h
-#ifndef ${HEADER_NAME}_H
-#define ${HEADER_NAME}_H
+# templating mbs-prelude.h
+cat <<'EOF' >> include/mbs_prelude.h
+#ifndef MBS_PRELUDE_H
+#define MBS_PRELUDE_H
 
 /* Standard includes */
 #include <assert.h>
@@ -40,6 +39,7 @@ cat <<EOF >> include/$PROJECT_NAME.h
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdnoreturn.h>
+#include <string.h>
 
 /* Wide character support */
 #include <locale.h>
@@ -64,14 +64,53 @@ typedef double   f64;
 
 /* String types */
 struct str_t {
-	char *str;
+	char *str; /* null terminated */
 	size_t len;
 };
 
+/* performs a shallow copy of the given string in "in" to the string in "out"
+ * ---
+ *  in: a pointer to the original string
+ *  out: a pointer to the shallow copy of the original string
+ */
+extern inline void str_copy(const struct str_t *in, struct str_t *out);
+
+/* attempts to deep copy the given string in "in" to the string in "out"
+ * ---
+ *  in: a pointer to the original string
+ *  out: a pointer to the deep copy of the original string
+ */
+extern inline b32 try_str_clone(const struct str_t *in, struct str_t *out);
+
 struct wstr_t {
-	wchar_t *str;
+	wchar_t *str; /* null terminated */
 	size_t len;
 };
+
+/* performs a shallow copy of the given string in "in" to the string in "out"
+ * ---
+ *  in: a pointer to the original string
+ *  out: a pointer to the shallow copy of the original string
+ */
+extern inline void wstr_copy(const struct wstr_t *in, struct wstr_t *out);
+
+/* attempts to deep copy the given string in "in" to the string in "out"
+ * ---
+ *  in: a pointer to the original string
+ *  out: a pointer to the deep copy of the original string
+ */
+extern inline b32 try_wstr_clone(const struct wstr_t *in, struct wstr_t *out);
+
+#endif /* MBS_PRELUDE_H */
+EOF
+
+# templating <project-name>.h
+HEADER_NAME="$(SLUGIFY $PROJECT_NAME)"
+cat <<EOF >> include/$PROJECT_NAME.h
+#ifndef ${HEADER_NAME}_H
+#define ${HEADER_NAME}_H
+
+#include "mbs_prelude.h"
 
 /* $PROJECT_NAME definitions */
 int main(int argc, char **argv);
@@ -80,6 +119,57 @@ int main(int argc, char **argv);
 EOF
 
 # templating src directory
+# templating mbs_prelude.c
+cat <<'EOF' > src/mbs_prelude.c
+#include "mbs_prelude.h"
+
+inline void str_copy(const struct str_t *in, struct str_t *out) {
+	assert(in);
+	assert(out);
+
+	out->len = in->len;
+	out->str = in->str;
+}
+
+inline b32 try_str_clone(const struct str_t *in, struct str_t *out) {
+	assert(in);
+	assert(out);
+
+	char *buf = (char*)malloc(in->len * sizeof(char));
+	if (!buf) return false;
+
+	strncpy(buf, in->str, in->len);
+
+	out->len = in->len;
+	out->str = buf;
+
+	return true;
+}
+
+inline void wstr_copy(const struct wstr_t *in, struct wstr_t *out) {
+	assert(in);
+	assert(out);
+
+	out->len = in->len;
+	out->str = in->str;
+}
+
+inline b32 try_wstr_clone(const struct wstr_t *in, struct wstr_t *out) {
+	assert(in);
+	assert(out);
+
+	wchar_t *buf = (wchar_t*)malloc(in->len * sizeof(wchar_t));
+	if (!buf) return false;
+
+	wcsncpy(buf, in->str, in->len);
+
+	out->len = in->len;
+	out->str = buf;
+
+	return true;
+}
+EOF
+
 # templating main.c
 cat <<EOF > src/main.c
 #include <stdio.h>
@@ -163,10 +253,10 @@ EOF
 
 # templating miscellaneous files
 # templating build
-cat <<EOF > build
+cat <<'EOF' > build
 #!/bin/sh
 
-. "\$(dirname \$0)/common.sh"
+. "$(dirname $0)/common.sh"
 
 # target toolchain flags
 COMMON_CXXFLAGS_EXT=""
@@ -181,34 +271,39 @@ REL_CXXFLAGS_EXT=""
 REL_CPPFLAGS_EXT=""
 REL_LDDFLAGS_EXT=""
 
-CXXFLAGS_EXT="\$COMMON_CXXFLAGS_EXT \$(REGIME "\$DBG_CXXFLAGS_EXT" "\$REL_CXXFLAGS_EXT")"
-CPPFLAGS_EXT="\$COMMON_CPPFLAGS_EXT \$(REGIME "\$DBG_CPPFLAGS_EXT" "\$REL_CPPFLAGS_EXT")"
-LDDFLAGS_EXT="\$COMMON_LDDFLAGS_EXT \$(REGIME "\$DBG_LDDFLAGS_EXT" "\$REL_LDDFLAGS_EXT")"
+CXXFLAGS_EXT="$COMMON_CXXFLAGS_EXT $(REGIME "CXXFLAGS_EXT")"
+CPPFLAGS_EXT="$COMMON_CPPFLAGS_EXT $(REGIME "CPPFLAGS_EXT")"
+LDDFLAGS_EXT="$COMMON_LDDFLAGS_EXT $(REGIME "LDDFLAGS_EXT")"
 
-[ \$VERBOSE ] && echo "$PROJECT_NAME CXXFLAGS: \$CXXFLAGS_EXT"
-[ \$VERBOSE ] && echo "$PROJECT_NAME CPPFLAGS: \$CPPFLAGS_EXT"
-[ \$VERBOSE ] && echo "$PROJECT_NAME LDDFLAGS: \$LDDFLAGS_EXT"
+[ $VERBOSE ] && echo "$TARGET CXXFLAGS: $CXXFLAGS_EXT"
+[ $VERBOSE ] && echo "$TARGET CPPFLAGS: $CPPFLAGS_EXT"
+[ $VERBOSE ] && echo "$TARGET LDDFLAGS: $LDDFLAGS_EXT"
 
+SRCS="$(find "$SRC" -name '*.c' -or -name '*.cpp')"
+[ $VERBOSE ] && echo "Sources: $SRCS"
 
 # compilation
-SRCS="\$(find "\$SRC" -name '*.c' -or -name '*.cpp')"
-[ \$VERBOSE ] && echo "Sources: \$SRCS"
+if [ $UNITY ]; then
+	UNITY_SRC="$(UNITY $SRCS)"
 
-OBJECTS "\$CXXFLAGS_EXT" "\$CPPFLAGS_EXT" \$SRCS
+	EXECUTABLE $TARGET "$CXXFLAGS_EXT" "$CPPFLAGS_EXT" "$LDDFLAGS_EXT" "$UNITY_SRC"
 
+	rm "$UNITY_SRC"
+else
+	OBJECTS "$CXXFLAGS_EXT" "$CPPFLAGS_EXT" $SRCS
 
-# linking
-OBJS="\$(find "\$OBJ" -name '*.o')"
-[ \$VERBOSE ] && echo "Objects: \$OBJS"
+	# linking
+	OBJS="$(find "$OBJ" -name '*.o')"
+	[ $VERBOSE ] && echo "Objects: $OBJS"
 
-EXECUTABLE $PROJECT_NAME "\$CXXFLAGS_EXT" "\$CPPFLAGS_EXT" "\$LDFLAGS_EXT" \$OBJS
-
+	EXECUTABLE $TARGET "$CXXFLAGS_EXT" "$CPPFLAGS_EXT" "$LDDFLAGS_EXT" $OBJS
+fi
 
 # testing
-TESTS="\$(find "\$TEST" -name '*.c' -or -name '*.cpp')"
-[ \$VERBOSE ] && echo "Tests: \$TESTS"
+TESTS="$(find "$TEST" -name '*.c' -or -name '*.cpp')"
+[ $VERBOSE ] && echo "Tests: $TESTS"
 
-TEST "\$CXXFLAGS_EXT" "\$CPPFLAGS_EXT" "\$LDFLAGS_EXT" \$TESTS
+TEST "$CXXFLAGS_EXT" "$CPPFLAGS_EXT" "$LDFLAGS_EXT" $TESTS
 EOF
 
 # templating clean
@@ -225,9 +320,14 @@ fi
 EOF
 
 # templating common.sh
-cat <<'EOF' > common.sh
+cat <<EOF > common.sh
 #!/bin/sh
 
+TARGET="$PROJECT_NAME"
+
+EOF
+
+cat <<'EOF' >> common.sh
 # project root
 PWD="$(dirname $0)"
 
@@ -249,20 +349,19 @@ CXX_BIN_FLAGS=""
 CXX_SO_FLAGS="-shared"
 
 # global toolchain flags
-COMMON_CXXFLAGS="-Wall -Wextra -Wpedantic"
-COMMON_CPPFLAGS="-I$INC"
-COMMON_LDDFLAGS="-L$LIB -L$OUT"
+COMMON_CXXFLAGS="$CFLAGS $CXXFLAGS -Wall -Wextra -Wpedantic"
+COMMON_CPPFLAGS="$CPPFLAGS -I$INC"
+COMMON_LDDFLAGS="$LDFLAGS -L$LIB -L$OUT"
 
 # Returns the correct set of flags based on the compilation regime
-# NOTE: setting multiple regime variables will result in multiple
-#       sets of flags being echoed out
+# NOTE: requires that the given regime has compilation flag variables in the
+#       form ${REGIME}_FLAG_ROOT (where FLAG_ROOT = CXXFLAGS, LDDFLAGS, etc)
 # Requires:
-#   $DBG $REL
+#   $REGIME
 # Usage:
-#   FLAGS="<common-flags> $(REGIME "<debug-flags>" "<release-flags>")"
+#   FLAGS="<common-flags> $(REGIME <flag-root>)"
 REGIME() {
-	[ $DBG ] && echo "$1"
-	[ $REL ] && echo "$2"
+	eval "echo \"\$${REGIME}_$1\""
 }
 
 DBG_CXXFLAGS="-Og -ggdb"
@@ -273,9 +372,9 @@ REL_CXXFLAGS="-O3 -flto"
 REL_CPPFLAGS="-DNDEBUG"
 REL_LDDFLAGS="-flto"
 
-CXXFLAGS="$COMMON_CXXFLAGS $(REGIME "$DBG_CXXFLAGS" "$REL_CXXFLAGS")"
-CPPFLAGS="$COMMON_CPPFLAGS $(REGIME "$DBG_CPPGLAGS" "$REL_CPPFLAGS")"
-LDDFLAGS="$COMMON_LDDFLAGS $(REGIME "$DBG_LDDFLAGS" "$REL_LDDFLAGS")"
+CXXFLAGS="$COMMON_CXXFLAGS $(REGIME "CXXFLAGS")"
+CPPFLAGS="$COMMON_CPPFLAGS $(REGIME "CPPGLAGS")"
+LDDFLAGS="$COMMON_LDDFLAGS $(REGIME "LDDFLAGS")"
 
 [ $VERBOSE ] && echo "global CXXFLAGS: $CXXFLAGS"
 [ $VERBOSE ] && echo "global CPPFLAGS: $CPPFLAGS"
@@ -304,6 +403,21 @@ INC() {
 	echo "$(pkg-config --cflags $@)"
 }
 
+# Creates a unity build source file from the given sources
+# Overwrites:
+#   __TMP_SOURCE
+# Usage:
+#   UNITY_SOURCE="$(UNITY <sources...>)"
+UNITY() {
+	__TMP_SOURCE="$(mktemp --suffix=.c)"
+
+	for src in $@; do
+		printf "#include \"$(readlink -f $src)\"\n" >> "$__TMP_SOURCE"
+	done
+
+	echo "$__TMP_SOURCE"
+}
+
 # Builds object files from the given sources
 # Requires:
 #   CXX CXXFLAGS CPPFLAGS OUT
@@ -317,7 +431,7 @@ OBJECTS() {
 	shift 2
 	for src in $@; do
 		EXEC mkdir -p "$(dirname $OBJ/$src)"
-		EXEC $CXX -o "$OBJ/$src.o" $CXXFLAGS $__OBJ_CXXFLAGS $CPPFLAGS $__OBJ_CPPFLAGS -c "$src"
+		EXEC $CXX -o "$OBJ/$src.o" -c "$src" $CXXFLAGS $__OBJ_CXXFLAGS $CPPFLAGS $__OBJ_CPPFLAGS
 		[ $? -eq 0 ] && echo "Compiled $src -> $OBJ/$src.o"
 	done
 }
@@ -374,7 +488,7 @@ STATICLIB() {
 # Requires:
 #   CXX CXXFLAGS CPPFLAGS LDFLAGS LIB OUT TEST
 # Overwrites:
-#   __TEST_NAME __TEST_CXXFLAGS __TEST_CPPFLAGS __TEST_LDFLAGS __TEST_TMP
+#   __TEST_CXXFLAGS __TEST_CPPFLAGS __TEST_LDFLAGS __TEST_TMP
 # Usage:
 #   TEST "<test-cxxflags>" "<test-cppflags>" "<test-ldflags>" <tests...>
 TEST() {
@@ -384,9 +498,9 @@ TEST() {
 	shift 3
 	__TEST_TMP=0
 	for test_src in $@; do
-		__TEST_NAME=$test_src.x
-		EXEC mkdir -p "$(dirname $OUT/$__TEST_NAME)"
-		EXEC $CXX -o "$OUT/$__TEST_NAME" $test_src -Wno-unused-value $CXXFLAGS $__TEST_CXXFLAGS -I$TEST $CPPFLAGS $__TEST_CPPFLAGS $LDFLAGS $__TEST_LDFLAGS && LD_LIBRARY_PATH="$OUT:$LIB:$LD_LIBRARY_PATH" "$OUT/$__TEST_NAME"
+		EXEC mkdir -p "$(dirname $OUT/$test_src.x)"
+		EXEC $CXX -o "$OUT/$test_src.x" "$test_src" -Wno-unused-value $CXXFLAGS $__TEST_CXXFLAGS -I$TEST $CPPFLAGS $__TEST_CPPFLAGS $LDFLAGS $__TEST_LDFLAGS && \
+			LD_LIBRARY_PATH="$OUT:$LIB:$LD_LIBRARY_PATH" "$OUT/$test_src.x"
 		[ $? -ne 0 ] && __TEST_TMP=1
 	done
 	echo "Ran tests: $([ $__TEST_TMP -eq 0 ] && echo PASS || echo FAIL)"
@@ -407,16 +521,25 @@ chmod +x build clean
 
 # create wrapper Makefile
 cat <<EOF > Makefile
-.PHONY: clean debug release run
+.PHONY: clean debug debug-unity release release-unity run run-unity
 
-run: clean debug
+run: debug
+	./out/$PROJECT_NAME
+
+run-unity: debug-unity
 	./out/$PROJECT_NAME
 
 debug: clean
-	DBG=1 ./build
+	REGIME=DBG ./build
+
+debug-unity: clean
+	REGIME=DBG UNITY=1 ./build
 
 release: clean
-	REL=1 ./build
+	REGIME=REL ./build
+
+release-unity: clean
+	REGIME=REL UNITY=1 ./build
 
 clean:
 	./clean
