@@ -54,7 +54,7 @@ This shell script cleans all the generated files.
 
 ### .gitignore
 The default `.gitignore` will ignore all files under the `/obj` and `/out`
-directories.
+directories. It will additionally ignore any vim swapfiles.
 
 ### Usage
 To create a new mbs project, run the `mbs-init` shell script:

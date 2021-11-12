@@ -511,6 +511,8 @@ EOF
 cat <<'EOF' > .gitignore
 obj/
 out/
+
+**/.*.swp
 EOF
 
 # initialise git repository
