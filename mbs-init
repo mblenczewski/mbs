@@ -34,6 +34,7 @@ cat <<'EOF' >> include/mbs_prelude.h
 #include <assert.h>
 #include <errno.h>
 #include <stdalign.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -45,6 +46,11 @@ cat <<'EOF' >> include/mbs_prelude.h
 #include <locale.h>
 #include <wchar.h>
 #include <wctype.h>
+
+/* Macros */
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define ARRLEN(arr) (sizeof(arr) / sizeof(arr[0]))
 
 /* Integral types */
 typedef uint32_t b32;
@@ -73,14 +79,14 @@ struct str_t {
  *  in: a pointer to the original string
  *  out: a pointer to the shallow copy of the original string
  */
-extern inline void str_copy(const struct str_t *in, struct str_t *out);
+extern void str_copy(const struct str_t *in, struct str_t *out);
 
 /* attempts to deep copy the given string in "in" to the string in "out"
  * ---
  *  in: a pointer to the original string
  *  out: a pointer to the deep copy of the original string
  */
-extern inline b32 try_str_clone(const struct str_t *in, struct str_t *out);
+extern b32 try_str_clone(const struct str_t *in, struct str_t *out);
 
 struct wstr_t {
 	wchar_t *str; /* null terminated */
@@ -92,14 +98,22 @@ struct wstr_t {
  *  in: a pointer to the original string
  *  out: a pointer to the shallow copy of the original string
  */
-extern inline void wstr_copy(const struct wstr_t *in, struct wstr_t *out);
+extern void wstr_copy(const struct wstr_t *in, struct wstr_t *out);
 
 /* attempts to deep copy the given string in "in" to the string in "out"
  * ---
  *  in: a pointer to the original string
  *  out: a pointer to the deep copy of the original string
  */
-extern inline b32 try_wstr_clone(const struct wstr_t *in, struct wstr_t *out);
+extern b32 try_wstr_clone(const struct wstr_t *in, struct wstr_t *out);
+
+/* prints out the given format string to standard error
+ * ---
+ *  fmt: the format string to print
+ *  ...: the variadic arguments to fprintf
+ *  NOTE: if NDEBUG is defined, this function will do nothing
+ */
+extern void dbglog(const char *fmt, ...);
 
 #endif /* MBS_PRELUDE_H */
 EOF
@@ -123,7 +137,7 @@ EOF
 cat <<'EOF' > src/mbs_prelude.c
 #include "mbs_prelude.h"
 
-inline void str_copy(const struct str_t *in, struct str_t *out) {
+void str_copy(const struct str_t *in, struct str_t *out) {
 	assert(in);
 	assert(out);
 
@@ -131,7 +145,7 @@ inline void str_copy(const struct str_t *in, struct str_t *out) {
 	out->str = in->str;
 }
 
-inline b32 try_str_clone(const struct str_t *in, struct str_t *out) {
+b32 try_str_clone(const struct str_t *in, struct str_t *out) {
 	assert(in);
 	assert(out);
 
@@ -146,7 +160,7 @@ inline b32 try_str_clone(const struct str_t *in, struct str_t *out) {
 	return true;
 }
 
-inline void wstr_copy(const struct wstr_t *in, struct wstr_t *out) {
+void wstr_copy(const struct wstr_t *in, struct wstr_t *out) {
 	assert(in);
 	assert(out);
 
@@ -154,7 +168,7 @@ inline void wstr_copy(const struct wstr_t *in, struct wstr_t *out) {
 	out->str = in->str;
 }
 
-inline b32 try_wstr_clone(const struct wstr_t *in, struct wstr_t *out) {
+b32 try_wstr_clone(const struct wstr_t *in, struct wstr_t *out) {
 	assert(in);
 	assert(out);
 
@@ -167,6 +181,18 @@ inline b32 try_wstr_clone(const struct wstr_t *in, struct wstr_t *out) {
 	out->str = buf;
 
 	return true;
+}
+
+void dbglog(const char *fmt, ...) {
+#ifndef NDEBUG
+	va_list ap;
+
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+#else
+	(void)fmt;
+#endif
 }
 EOF
 
@@ -545,6 +571,32 @@ release-unity: clean
 
 clean:
 	./clean
+EOF
+
+# create editorconfig
+cat <<'EOF' > .editorconfig
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+
+[*.{c,cpp,h,hpp,tpp}]
+indent_style = tab
+indent_size = 8
+
+[*.{sh,conf}]
+indent_style = tab
+indent_size = 8
+
+[*.{css,html,js,jsx,ts,tsx}]
+indent_style = space
+indent_size = 2
+
+[*.{json,md}]
+indent_style = space
+indent_size = 2
 EOF
 
 # create initial README.md
