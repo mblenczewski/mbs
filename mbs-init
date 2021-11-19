@@ -551,7 +551,10 @@ chmod +x build clean
 
 # create wrapper Makefile
 cat <<EOF > Makefile
-.PHONY: clean debug debug-unity release release-unity run run-unity
+.PHONY: clean debug debug-unity memcheck release release-unity run run-unity threadcheck
+
+MEMCHECK := valgrind --tool="memcheck" --leak-check=full --show-leak-kinds=all --track-origins=yes -s
+THREADCHECK := valgrind --tool="helcheck"
 
 run: debug
 	./out/$PROJECT_NAME
@@ -573,6 +576,12 @@ release-unity: clean
 
 clean:
 	./clean
+
+memcheck: debug
+	\$\(MEMCHECK\) ./out/$PROJECT_NAME
+
+threadcheck: debug
+	\$\(THREADCHECK\) ./out/$PROJECT_NAME
 EOF
 
 # create editorconfig
