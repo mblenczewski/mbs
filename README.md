@@ -3,59 +3,6 @@ A minimal build system written in POSIX shell script. Templates a directory
 structure for c and cpp projects, creates default build and clean scripts,
 and includes a minimalist testing framework.
 
-## mbs-init
-### Directory Structure
-mbs creates the following directory structure:
-```text
-# usage: mbs-init <project-name>
-$ mbs-init example-proj
-
-# creates the following directory structure
-# Key:
-#   d - directory   x - executable shell script   f - file
-d /example-proj
-d   /.git
-d   /include
-f     mbs_prelude.h
-f     example-proj.h
-d   /lib
-d   /obj
-d   /out
-d   /src
-f     mbs_prelude.c
-f     main.c
-d   /test
-f     test.h
-f     test_example.c
-f   .gitignore
-x   build
-x   clean
-f   common.sh
-f   Makefile
-f   README.md
-```
-
-### mbs\_prelude
-The `mbs_prelude.{c,h}` files contain global definitions for integral types,
-string types, common functions, and their implementations. They also contain
-common headers to be included.
-
-### common.sh
-This file contains the project settings, such as global compiler, preprocessor,
-and linker flags, the different directories, the toolchain in use (compiler, 
-linker, archiver), and the implementation of the minimal build system.
-
-### build
-This shell script defines the project sources, performs an out-of-source build,
-and runs all tests.
-
-### clean
-This shell script cleans all the generated files.
-
-### .gitignore
-The default `.gitignore` will ignore all files under the `/obj` and `/out`
-directories. It will additionally ignore any vim swapfiles.
-
 ### Usage
 To create a new mbs project, run the `mbs-init` shell script:
 ```sh
@@ -63,9 +10,13 @@ mbs-init <project-name>
 cd <project-name>
 ```
 
-To build an mbs project, run the `build` shell script:
+To build an mbs project, run the `build` shell script or simply run `make debug`:
 ```sh
 ./build
+## OR
+make debug
+## OR
+make release
 ```
 
 The `build` shell script recognises a `VERBOSE=1` flag to show more information
@@ -89,12 +40,15 @@ executable as follows:
 build && ./out/<executable-name>
 ```
 
-To clean an mbs project, run the `clean` shell script:
+Alternatively, simply run `make` to build a debug version of the project and
+run the built executable:
 ```sh
-./clean
+make
 ```
 
-### Makefile
-Additionally, a very simple Makefile wrapper around the build and clean scripts
-is generated, so instead of running `./build` or `./clean` you can simply call
-`make` with the appropriate target.
+To clean an mbs project, run the `clean` shell script or run `make clean`:
+```sh
+./clean
+## OR
+make clean
+```
