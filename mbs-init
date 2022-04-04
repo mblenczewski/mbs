@@ -25,10 +25,11 @@ cd "$PROJECT_NAME"
 mkdir "include" "lib" "obj" "out" "src" "test"
 
 # templating include directory
-# templating mbs-prelude.h
-cat <<'EOF' >> include/mbs_prelude.h
-#ifndef MBS_PRELUDE_H
-#define MBS_PRELUDE_H
+# templating <project-name>.h
+HEADER_NAME="$(SLUGIFY $PROJECT_NAME)"
+cat <<EOF >> include/$PROJECT_NAME.h
+#ifndef ${HEADER_NAME}_H
+#define ${HEADER_NAME}_H
 
 /* Standard includes */
 #include <assert.h>
@@ -92,16 +93,7 @@ struct wstr_t {
 	#define dbglog(...)
 #endif
 
-#endif /* MBS_PRELUDE_H */
-EOF
-
-# templating <project-name>.h
-HEADER_NAME="$(SLUGIFY $PROJECT_NAME)"
-cat <<EOF >> include/$PROJECT_NAME.h
-#ifndef ${HEADER_NAME}_H
-#define ${HEADER_NAME}_H
-
-#include "mbs_prelude.h"
+#define errlog(...) fprintf(stderr, __VA_ARGS__)
 
 /* $PROJECT_NAME definitions */
 int main(int argc, char **argv);
