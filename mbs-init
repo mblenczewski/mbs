@@ -116,6 +116,9 @@ cat >"$PROJECT_ROOT/src/main.c" <<EOF
 #include "$PROJECT.h"
 
 int main(int argc, char **argv) {
+	(void)argc;
+	(void)argv;
+
 	printf("Hello, World!\\n");
 
 	return 0;
@@ -141,11 +144,8 @@ cat >"$PROJECT_ROOT/tests/mbs_test.h" <<'EOF'
 
 #define TEST(test_name, test_body)						\
 int test_name(void) {								\
-	int __##test_name##_result = 1;						\
-										\
 	test_body								\
-										\
-	return __##test_name##_result;						\
+	PASS()									\
 }
 
 #define TEST_RUN(test)								\
@@ -160,11 +160,11 @@ int test_name(void) {								\
 }
 
 /* Assertions */
-#define ASSERT(condition, message)						\
-if (!(condition)) { fprintf(stderr, (message)); FAIL(); }
+#define ASSERT(cond, msg)							\
+if (!(cond)) { fprintf(stderr, "%s:%d: ASSERT(%s, \"%s\"): ", __func__, __LINE__, #cond, msg); FAIL(); }
 
-#define ASSERT_NE(condition, message)						\
-if ((condition)) { fprintf(stderr, (message)); FAIL(); }
+#define ASSERT_NE(cond, msg)							\
+if (cond) { fprintf(stderr, "%s:%d: ASSERT_NE(%s, \"%s\"): ", __func__, __LINE__, #cond, msg); FAIL(); }
 
 #endif /* MBS_TEST_H */
 EOF
@@ -203,24 +203,25 @@ TARGET="$PROJECT"
 
 EOF
 
-cat >"$PROJECT_ROOT/common.sh" <<'EOF'
+cat >>"$PROJECT_ROOT/common.sh" <<'EOF'
 # project root
 PWD="$(dirname $0)"
 
 # project directory structure
-BIN="$PWD/bin"
-OBJ="$PWD/obj"
+BIN="${BIN:-$PWD/bin}"
+OBJ="${OBJ:-$PWD/obj}"
+SRC="${SRC:-$PWD/src}"
+INC="${INC:-$PWD/include}"
+TEST="${TEST:-$PWD/tests}"
+TOOLCHAINS="${TOOLCHAINS:-$PWD/toolchains}"
 
-SRC="$PWD/src"
-INC="$PWD/include"
-TEST="$PWD/tests"
-
-TOOLCHAINS="$PWD/toolchains"
-
-# toolchain specific flags
-CC_BIN_FLAGS=""
-CC_SO_FLAGS="-shared"
-
+# Loads the environment variables defined for the given toolchain target
+# Requires:
+#   TOOLCHAIN
+# Overwrites:
+#   __TOOLCHAIN __TGT_TOOLCHAIN __f
+# Usage:
+#   TOOLCHAIN x86_64-none-linux-gnu
 TOOLCHAIN() {
 	__TOOLCHAIN="${1:-${TOOLCHAIN:-host}}"
 	__TGT_TOOLCHAIN="$TOOLCHAINS/env-$__TOOLCHAIN.sh"
@@ -238,23 +239,23 @@ TOOLCHAIN() {
 	fi
 }
 
-# default toolchain flags
-DEFAULT_CFLAGS="-std=c11 -Wall -Wextra -Wpedantic"
-DEFAULT_CPPFLAGS="-I$INC"
-DEFAULT_LDFLAGS="-L$BIN"
-
 # Returns the correct set of flags based on the compilation regime
 # NOTE: requires that the given regime has compilation flag variables in the
 #       form ${REGIME}_FLAG_ROOT (where FLAG_ROOT = CFLAGS, LDFLAGS, etc)
 # Requires:
-#   $REGIME
+#   REGIME
 # Overwrites:
 #   __REGIME
 # Usage:
 #   FLAGS="<common-flags> $(REGIME <flag-root>)"
 REGIME() {
-	eval "echo \"\$${REGIME:-DEBUG}_$1\""
+	eval "echo \$${REGIME:-DEBUG}_$1"
 }
+
+# toolchain flags
+CFLAGS="$CFLAGS -std=c11 -Wall -Wextra -Wpedantic"
+CPPFLAGS="$CPPFLAGS -I$INC"
+LDFLAGS="$LDFLAGS -L$BIN"
 
 DEBUG_CFLAGS="-Og -ggdb"
 DEBUG_CPPFLAGS=""
@@ -268,24 +269,22 @@ CFLAGS="$CFLAGS $(REGIME CFLAGS)"
 CPPFLAGS="$CPPFLAGS $(REGIME CPPFLAGS)"
 LDFLAGS="$LDFLAGS $(REGIME LDFLAGS)"
 
-[ $VERBOSE ] && echo "global CFLAGS: $CFLAGS"
-[ $VERBOSE ] && echo "global CPPFLAGS: $CPPFLAGS"
-[ $VERBOSE ] && echo "global LDFLAGS: $LDFLAGS"
-
 # Logs the given parameters to stderr if the VERBOSE variable is defined
+# Overwrites:
+#   __ERRNO
 # Usage:
 #   LOG <message...>
 LOG() {
-	[ $VERBOSE ] && printf "%s\n" "$*" >&2
+	__ERRNO=$?; [ $VERBOSE ] && printf "%s\n" "$*" >&2; ( exit $__ERRNO )
 }
 
 # Executes the given command, echoing it out if the VERBOSE variable is defined
 # Overwrites:
-#   __TMP_ERRNO
+#   __ERRNO
 # Usage:
 #   EXEC <command...>
 EXEC() {
-	__TMP_ERRNO=$?; [ $VERBOSE ] && LOG $@; ( exit $__TMP_ERRNO ) && $@
+	__ERRNO=$?; LOG $@; $@; ( exit $__ERRNO )
 }
 
 # Echoes the LDFLAGS for the given library
@@ -406,7 +405,7 @@ LDFLAGS="$LDFLAGS"
 CC_BIN_FLAGS=""
 CC_SO_FLAGS="-shared"
 
-CC="${CC:-gcc}"
+CC="${CC:-cc}"
 AR="${AR:-ar}"
 AS="${AS:-as}"
 LD="${LD:-ld}"
@@ -420,15 +419,15 @@ cat >"$PROJECT_ROOT/build" <<'EOF'
 
 TOOLCHAIN
 
-[ $VERBOSE ] && echo "$TARGET CFLAGS: $CFLAGS"
-[ $VERBOSE ] && echo "$TARGET CPPFLAGS: $CPPFLAGS"
-[ $VERBOSE ] && echo "$TARGET LDFLAGS: $LDFLAGS"
+LOG "$TARGET CFLAGS: $CFLAGS"
+LOG "$TARGET CPPFLAGS: $CPPFLAGS"
+LOG "$TARGET LDFLAGS: $LDFLAGS"
 
 SRCS="$SRC/main.c"
-[ $VERBOSE ] && echo "Sources: $SRCS"
+LOG "Sources: $SRCS"
 
 # compilation
-EXECUTABLE $TARGET "$CFLAGS" "$CPPFLAGS" "$LDFLAGS" $SRCS
+EXECUTABLE "$TARGET" "$CFLAGS" "$CPPFLAGS" "$LDFLAGS" $SRCS
 EOF
 
 cat >"$PROJECT/clean" <<'EOF'
@@ -436,11 +435,7 @@ cat >"$PROJECT/clean" <<'EOF'
 
 . "$(dirname $0)/common.sh"
 
-if [ $VERBOSE ]; then
-	rm -frv $OBJ/* $BIN/*
-else
-	rm -fr $OBJ/* $BIN/*
-fi
+rm -fr $OPTS $OBJ/* $BIN/*
 EOF
 
 cat >"$PROJECT/dist" <<'EOF'
@@ -448,7 +443,9 @@ cat >"$PROJECT/dist" <<'EOF'
 
 . "$(dirname $0)/common.sh"
 
-## TODO
+VERSION="${VERSION:-$(git describe --tags 2>/dev/null || echo 0.1.0)}"
+
+tar -czf "$TARGET-$VERSION.tar.gz" "$BIN/$TARGET" "$SRC/" "$INC/"
 EOF
 
 cat >"$PROJECT/install" <<'EOF'
@@ -456,7 +453,9 @@ cat >"$PROJECT/install" <<'EOF'
 
 . "$(dirname $0)/common.sh"
 
-## TODO
+PREFIX="${PREFIX:-/usr/local}"
+
+cp "$BIN/$TARGET" "$PREFIX/bin/$TARGET"
 EOF
 
 cat >"$PROJECT/test" <<'EOF'
@@ -467,7 +466,7 @@ cat >"$PROJECT/test" <<'EOF'
 TOOLCHAIN host
 
 TESTS="$(find "$TEST" -name '*.c' -or -name '*.cpp')"
-[ $VERBOSE ] && echo "Tests: $TESTS"
+LOG "Tests: $TESTS"
 
 TEST "$CFLAGS" "$CPPFLAGS" "$LDFLAGS" $TESTS
 EOF
@@ -477,7 +476,9 @@ cat >"$PROJECT/uninstall" <<'EOF'
 
 . "$(dirname $0)/common.sh"
 
-## TODO
+PREFIX="${PREFIX:-/usr/local}"
+
+rm "$PREFIX/bin/$TARGET"
 EOF
 
 ## setting execute permissions
