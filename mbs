@@ -1,0 +1,610 @@
+#!/bin/sh
+
+##############################################################################
+# MBS (Miko's Build System)
+# ----------------------------------------------------------------------------
+# This script sets up a simple, monorepo layout for building a single project
+# or a suite of related projects (think LLVM repository structure). The actual
+# build system is a set of dumb POSIX shell scripts that orchestrates building
+# a set of top-level projects from scratch, with each project building its
+# dependencies as required. Yes, this wastes some processor time on rebuilding
+# objects and binaries that have already been compiled once. No, its never
+# been an issue for me at the scale that I write toy software :)
+# ----------------------------------------------------------------------------
+# This script sets up a single C project, using the host toolchain, and a set
+# of shell scripts that implement cleaning, building, and testing the single
+# project. There is also a simple wrapper Makefile for convenience.
+##############################################################################
+
+set -e
+
+SLUGIFY() {
+	echo $1 | tr '[:blank:]' '-'
+}
+
+UPPERCASE() {
+	echo $1 | tr '[:lower:]' '[:upper:]'
+}
+
+ELOG() {
+	printf "%s\n" "$*" >&2
+}
+
+USAGE() {
+	ELOG "Usage: $(basename $0) <project-name>"
+	ELOG "  Creates a new monorepo-style project with the given name"
+}
+
+[ "${1:-z}" = "z" ] && ( USAGE; exit 1 )
+
+ROOT="$(pwd)"
+NAME="$(SLUGIFY $1)"
+SLUG="$(UPPERCASE $NAME)"
+
+if [ -d "$ROOT/$NAME" ]; then
+	ELOG "Target folder $ROOT/$NAME already exists!";
+	exit 1
+fi
+
+## template in repo and project layout
+
+git init "$ROOT/$NAME"
+cd "$ROOT/$NAME"
+
+DIRS="
+	$NAME $NAME/src $NAME/include $NAME/tests
+	docs docs/$NAME
+	include
+"
+
+mkdir $DIRS
+
+## template in non-code files
+cat >.editorconfig <<'EOF'
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+
+[*.{c,cpp,h,hpp,tpp}]
+indent_style = tab
+indent_size = 8
+
+[*.{sh}]
+indent_style = tab
+indent_size = 8
+
+[*.{css,html,js,jsx,ts,tsx}]
+indent_style = space
+indent_size = 2
+
+[*.{conf,json,md,txt}]
+indent_style = space
+indent_size = 2
+EOF
+
+cat >.gitignore <<'EOF'
+bin/
+lib/
+obj/
+
+**/.*.swp
+EOF
+
+cat >README.txt <<EOF
+$NAME
+==============================================================================
+EOF
+
+cat >docs/README.txt <<EOF
+$NAME
+==============================================================================
+EOF
+
+cat >docs/$NAME/README.txt <<EOF
+$NAME
+==============================================================================
+EOF
+
+touch LICENSE.txt
+
+## template in common code files
+
+cat >include/common.h <<'EOF'
+#ifndef COMMON_H
+#define COMMON_H
+
+#include <assert.h>
+#include <float.h>
+#include <limits.h>
+#include <locale.h>
+#include <stdalign.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdnoreturn.h>
+#include <wchar.h>
+
+typedef int32_t b32;
+
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+
+typedef int8_t s8;
+typedef int16_t s16;
+typedef int32_t s32;
+typedef int64_t s64;
+
+typedef float f32;
+typedef double f64;
+
+#define ALLOC_OVERFLOWS(type, count) ((UINT_MAX / sizeof(type)) < (count))
+#define ARRLEN(arr) (sizeof(arr) / sizeof((arr)[0]))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
+#define errlog(...) fprintf(stderr, __VA_ARGS__)
+
+#ifndef NDEBUG
+	#define dbglog(...) errlog(__VA_ARGS__)
+#else
+	#define dbglog(...)
+#endif
+
+#endif /* COMMON_H */
+EOF
+
+cat >include/test.h <<'EOF'
+#ifndef TEST_H
+#define TEST_H
+
+#include "common.h"
+
+#define TEST_PASS() return 1;
+#define TEST_FAIL() return 0;
+
+#define TEST(name, body)							\
+s32										\
+name(void) {									\
+	s32 __##name##_result = 1; body; return __##name##_result;		\
+}
+
+#define TESTS_BEGIN() s32 __test_suite_result = 0;
+#define TESTS_END() return __test_suite_result;
+
+#define TEST_RUN(name)								\
+{										\
+	errlog("%s:%s:\n", __FILE__, #name);					\
+	if (name()) {								\
+		errlog("%s:%s: OK\n", __FILE__, #name);				\
+	} else {								\
+		errlog("%s:%s: FAILED\n", __FILE__, #name);			\
+		__test_suite_result = 1;					\
+	}									\
+}
+
+#define _TEST_ASSERT_IMPL(cond, msg)						\
+errlog("[%s:%d] %s: %s\n", __func__, __LINE__, #cond, msg)
+
+#define TEST_ASSERT(cond, msg)							\
+if (!(cond)) { _TEST_ASSERT_IMPL(cond, msg); TEST_FAIL() }
+
+#define TEST_EXPECT(cond, msg)							\
+if (!(cond)) { _TEST_ASSERT_IMPL(cond, msg); }
+
+#endif /* TEST_H */
+EOF
+
+## template in selected project
+
+cat >$NAME/include/$NAME.h <<EOF
+#ifndef ${SLUG}_H
+#define ${SLUG}_H
+
+#include "common.h"
+
+#endif /* ${SLUG}_H */
+EOF
+
+cat >$NAME/src/$NAME.c <<EOF
+#include "$NAME.h"
+
+s32
+main(s32 argc, char **argv) {
+	(void)argc;
+	(void)argv;
+
+	dbglog("Version: " ${SLUG}_VERSION "\n");
+	printf("Hello, World!\n");
+
+	return 0;
+}
+EOF
+
+cat >$NAME/src/unity.c <<EOF
+#include "$NAME.c"
+EOF
+
+cat >$NAME/tests/test_$NAME.c <<EOF
+#include "test.h"
+#include "$NAME.h"
+
+TEST(test_example, {
+	int a = 42;
+
+	TEST_EXPECT(a + 2 == 44, "a + 2 != 44")
+	TEST_ASSERT(a == 42, "a != 42")
+
+	TEST_PASS()
+})
+
+s32
+main(s32 argc, char **argv) {
+	(void)argc;
+	(void)argv;
+
+	TESTS_BEGIN()
+
+	TEST_RUN(test_example)
+
+	TESTS_END()
+}
+EOF
+
+cat >$NAME/common.sh <<EOF
+#!/bin/sh
+
+set -e
+
+. "\$ROOT/toolchain.sh"
+
+TARGET="$NAME"
+
+TARGET_VER_MAJOR="0"
+TARGET_VER_MINOR="1"
+TARGET_VER_PATCH="0"
+TARGET_VER="\$TARGET_VER_MAJOR.\$TARGET_VER_MINOR.\$TARGET_VER_PATCH"
+
+TARGET_FLAGS="
+	\$CFLAGS
+
+	\$CPPFLAGS
+	-D${SLUG}_VERSION_MAJOR="\"\$TARGET_VER_MAJOR\""
+	-D${SLUG}_VERSION_MINOR="\"\$TARGET_VER_MINOR\""
+	-D${SLUG}_VERSION_PATCH="\"\$TARGET_VER_PATCH\""
+	-D${SLUG}_VERSION="\"\$TARGET_VER\""
+	-I\$TARGET_ROOT/include
+	
+	\$LDFLAGS
+"
+
+TARGET_TEST_FLAGS="
+	\$CFLAGS
+
+	\$CPPFLAGS
+	-I\$TARGET_ROOT/include
+
+	\$LDFLAGS
+"
+EOF
+
+cat >$NAME/build.sh <<EOF
+#!/bin/sh
+
+set -e
+
+. "\$TARGET_ROOT/common.sh"
+
+TARGET_SOURCES="
+	\$TARGET_ROOT/src/unity.c
+"
+
+TARGET_OBJECTS="\$(OBJECTS "\$TARGET_FLAGS" \$TARGET_SOURCES)"
+
+EXEC "\$CC" -o "\$BIN/\$TARGET" \$TARGET_OBJECTS \$TARGET_FLAGS
+EOF
+
+cat >$NAME/test.sh <<EOF
+#!/bin/sh
+
+set -e
+
+. "\$TARGET_ROOT/common.sh"
+
+TARGET_TESTS="
+	\$TARGET_ROOT/tests/test_$NAME.c
+"
+
+TESTS "\$TARGET_TEST_FLAGS" \$TARGET_TESTS
+EOF
+
+## template in build system
+
+cat >common.sh <<'EOF'
+#!/bin/sh
+
+set -e
+
+[ "${COMMON_INCLUDE_GUARD:-z}" = "z" ] && COMMON_INCLUDE_GUARD=1
+
+[ $DRYRUN ] && VERBOSE=1
+
+ROOT="$(dirname $0)"
+
+INC="$ROOT/include"
+
+BIN="$ROOT/bin"
+LIB="$ROOT/lib"
+OBJ="$ROOT/obj"
+
+TESTS="$BIN/tests"
+
+## set up artefact directories if they don't exist
+[ -d "$BIN" ] || mkdir "$BIN"
+[ -d "$LIB" ] || mkdir "$LIB"
+[ -d "$OBJ" ] || mkdir "$OBJ"
+
+## Resets the current toolchain environment to the given toolchain's defaults
+## Usage:
+##   TOOLCHAIN <toolchain-id>
+TOOLCHAIN() {
+	. "$ROOT/toolchain-$1.sh"
+}
+
+## Echoes out the flags associated with the current REGIME and given flag root
+## Requires:
+##   REGIME
+## Usage:
+##   REGIME <flag-root>
+REGIME() {
+	eval "echo \$${REGIME:-DEBUG}_$1"
+}
+
+## Logs the given message to stdout
+## Usage:
+##   LOG <msg...>
+LOG() {
+	printf "%s\n" "$*"
+}
+
+## Logs the given message to stderr
+## Usage:
+##   ELOG <msg...>
+ELOG() {
+	printf "%s\n" "$*" >&2
+}
+
+## Executes the given command
+## Usage:
+##   EXEC <cmd...>
+EXEC() {
+	[ $VERBOSE ] && ELOG $@; [ $DRYRUN ] || $@
+}
+
+## Echoes out the LDFLAGS for the given library
+## Usage:
+##   LIB <library> [pkgconf opts...]
+LIB() {
+	pkgconf --libs $@
+}
+
+## Echoes out the CPPFLAGS for the given library
+## Usage:
+##   INC <library> [pkgconf opts...]
+INC() {
+	pkgconf --cflags $@
+}
+
+## Compiles all given sources into objects
+## Requires:
+##   CC OBJ
+## Overwrites:
+##   __OBJ_FLAGS __SRC
+## Usage:
+##   OBJECTS "<flag...>" <src...>
+OBJECTS() {
+	__OBJ_FLAGS="$1"
+	shift 1
+	for __SRC in $@; do
+		EXEC mkdir -p "$(dirname $OBJ/$__SRC)"
+		EXEC "$CC" -o "$OBJ/$__SRC.o" -c "$__SRC" $__OBJ_FLAGS
+		LOG "$OBJ/$__SRC.o"
+	done
+}
+
+
+## Compiles and executes all tests
+## Requires:
+##   CC TESTS
+## Overwrites:
+##   __SRC __TEST_FLAGS
+## Usage:
+##   TESTS "<flag...>" <test_src...>
+TESTS() {
+	__TEST_FLAGS="$1"
+	shift 1
+	for __SRC in $@; do
+		EXEC mkdir -p "$(dirname "$TESTS/$__SRC")"
+		EXEC "$CC" -static -o "$TESTS/$__SRC.x" "$__SRC" $__TEST_FLAGS
+		EXEC "$TESTS/$__SRC.x"
+	done
+}
+EOF
+
+cat >toolchain.sh <<'EOF'
+#!/bin/sh
+
+set -e
+
+[ "${COMMON_INCLUDE_GUARD:-z}" = "z" ] && . "$(dirname $0)/common.sh"
+
+## setup toolchain and default toolchain flags (CFLAGS, CPPFLAGS, LDFLAGS)
+TOOLCHAIN "${TOOLCHAIN:-host}"
+
+CC="${CC:-$(which cc)}"
+
+AR="${AR:-$(which ar)}"
+RANLIB="${RANLIB:-$(which ranlib)}"
+
+STRIP="${STRIP:-$(which strip)}"
+
+## append project-wide toolchain flags
+CFLAGS="$CFLAGS -std=c11 -Wall -Wextra -Wpedantic -Werror"
+CPPFLAGS="$CPPFLAGS -I$INC"
+LDFLAGS="$LDFLAGS -L$LIB"
+
+DEBUG_CFLAGS="$DEBUG_CFLAGS"
+DEBUG_CPPFLAGS="$DEBUG_CPPFLAGS -UNDEBUG"
+DEBUG_LDFLAGS="$DEBUG_LDFLAGS"
+
+RELEASE_CFLAGS="$RELEASE_CFLAGS"
+RELEASE_CPPFLAGS="$RELEASE_CPPFLAGS -DNDEBUG"
+RELEASE_LDFLAGS="$RELEASE_LDFLAGS"
+
+## append regime-specific toolchain flags
+CFLAGS="$CFLAGS $(REGIME CFLAGS)"
+CPPFLAGS="$CPPFLAGS $(REGIME CPPFLAGS)"
+LDFLAGS="$LDFLAGS $(REGIME LDFLAGS)"
+EOF
+
+cat >toolchain-host.sh <<'EOF'
+#!/bin/sh
+
+set -e
+
+CFLAGS=""
+CPPFLAGS=""
+LDFLAGS=""
+
+DEBUG_CFLAGS="-Og -ggdb"
+DEBUG_CPPFLAGS=""
+DEBUG_LDFLAGS=""
+
+RELEASE_CFLAGS="-O3 -flto"
+RELEASE_CPPFLAGS=""
+RELEASE_LDFLAGS="-flto"
+EOF
+
+cat >clean.sh <<'EOF'
+#!/bin/sh
+
+set -e
+
+. "$(dirname $0)/common.sh"
+
+EXEC "rm" -fr "$BIN" "$LIB" "$OBJ"
+EOF
+
+cat >build.sh <<EOF
+#!/bin/sh
+
+set -e
+
+. "\$(dirname \$0)/common.sh"
+
+USAGE() {
+	ELOG "Usage \$0 <target...>"
+	ELOG "  Targets: all $NAME"
+}
+
+BUILD_PROJECT() {
+	LOG "Building project: \$1 \${TOOLCHAIN:+(\$TOOLCHAIN)}"
+	TARGET_ROOT="\$ROOT/\$1" . "\$ROOT/\$1/build.sh"
+}
+
+if [ "\$#" = "0" ]; then
+	ELOG "No target selected!"
+	USAGE
+	exit 1
+fi
+
+for tgt in \$@; do
+	case "\$tgt" in
+		all)
+			TOOLCHAIN="\$TOOLCHAIN" "\$ROOT/build.sh" "$NAME"
+			;;
+		$NAME)
+			BUILD_PROJECT "\$tgt"
+			;;
+		*)
+			ELOG "Unknown project: \$tgt"
+			USAGE
+			exit 1
+			;;
+	esac
+done
+EOF
+
+cat >test.sh <<EOF
+#!/bin/sh
+
+set -e
+
+. "\$(dirname \$0)/common.sh"
+
+USAGE() {
+	ELOG "Usage \$0 <target...>"
+	ELOG "  Targets: all $NAME"
+}
+
+TEST_PROJECT() {
+	LOG "Testing project: \$1 \${TOOLCHAIN:+(\$TOOLCHAIN)}"
+	TARGET_ROOT="\$ROOT/\$1" . "\$ROOT/\$1/test.sh"
+}
+
+if [ "\$#" = "0" ]; then
+	ELOG "No target selected!"
+	USAGE
+	exit 1
+fi
+
+for tgt in \$@; do
+	case "\$tgt" in
+		all)
+			TOOLCHAIN="\$TOOLCHAIN" "\$ROOT/test.sh" "$NAME"
+			;;
+		$NAME)
+			TEST_PROJECT "\$tgt"
+			;;
+		*)
+			ELOG "Unknown project: \$tgt"
+			USAGE
+			exit 1
+			;;
+	esac
+done
+EOF
+
+cat >Makefile <<EOF
+.PHONY: all build clean test
+
+PROJECTS	:= $NAME
+
+all: build test
+
+clean:
+	./clean.sh
+
+build: clean
+	./build.sh all
+
+test: clean
+	./test.sh all
+
+## project targets
+\${PROJECTS}: clean
+	./build.sh \$@
+	./test.sh \$@
+EOF
+
+## fix up permissions on shell scripts
+chmod +x clean.sh build.sh test.sh
+
+cd "$ROOT"

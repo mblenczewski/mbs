@@ -3,52 +3,38 @@ A minimal build system written in POSIX shell script. Templates a directory
 structure for c and cpp projects, creates default build and clean scripts,
 and includes a minimalist testing framework.
 
-### Usage
-To create a new mbs project, run the `mbs-init` shell script:
-```sh
-mbs-init <project-name>
-cd <project-name>
+## Usage
+To create a new mbs project, simply invoke the `mbs` script with a project
+name. Preferrably the name has no spaces, otherwise all blankspace characters
+will be replaced with `-`. Once in the project directory, simply use the
+available shell scripts (`clean.sh`, `build.sh`, and `test.sh`) or the
+Makefile wrapper to build your desired projects.
+
+The build system recognises the following environment variables:
+```text
+TOOLCHAIN=[host|<my-toolchain>] :
+- uses the defined toolchain-<my-toolchain>.sh file to set the default
+  toolchain flags
+
+REGIME=[DEBUG|RELEASE|<my-regime>] :
+- sets the additional compilation-regime-specific toolchain flags to add to
+  the build flags. if a custom regime is specified, it has to be added to the
+  toolchain preset files
+
+VERBOSE[=1] :
+- if defined, will print out all executed commands to stderr
+
+DRYRUN[=1] :
+- if defined, will print out all commands that would be executed to stderr,
+  without actually executing the commands
 ```
 
-To build an mbs project, run the `build` shell script or simply run `make debug`:
+## Example
 ```sh
-./build
-## OR
-make debug
-## OR
-make release
-```
-
-The `build` shell script recognises a `VERBOSE=1` flag to show more information
-about the steps its taking, as well as the `REGIME={DBG,REL}` flag to select
-the compilation regime (and include the appropriate toolchain flags):
-```sh
-VERBOSE=1 REGIME=DBG ./build
-
-REGIME=REL ./build
-
-# NOTE: you can provide a custom regime, but will need to add the regime flag
-#       variables (MY_REGIME_CXXFLAGS, MY_REGIME_LDDFLAGS, etc) to ./build
-#       and optionally to ./common.sh
-REGIME=MY_REGIME ./build
-```
-
-The `build` shell script does not run any built executables. It exits with a
-non-zero exit code if any tests fail, and should be chained with running the
-executable as follows:
-```sh
-build && ./out/<executable-name>
-```
-
-Alternatively, simply run `make` to build a debug version of the project and
-run the built executable:
-```sh
-make
-```
-
-To clean an mbs project, run the `clean` shell script or run `make clean`:
-```sh
-./clean
-## OR
-make clean
+$ mbs testproj
+$ cd testproj
+$ REGIME=DEBUG ./build.sh all
+$ VERBOSE=1 make testproj
+$ make clean
+$ cd ..
 ```
