@@ -119,16 +119,15 @@ cat >include/common.h <<'EOF'
 #include <assert.h>
 #include <float.h>
 #include <limits.h>
-#include <locale.h>
+#include <setjmp.h>
 #include <stdalign.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdint.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <stdnoreturn.h>
-#include <wchar.h>
 
 typedef int32_t b32;
 
@@ -258,353 +257,126 @@ main(s32 argc, char **argv) {
 }
 EOF
 
-cat >$NAME/common.sh <<EOF
-#!/bin/sh
+cat >$NAME/makefile.mk <<EOF
+.PHONY: $NAME $NAME-build $NAME-deps $NAME-test
 
-set -e
+${SLUG}_MAJOR		:= 0
+${SLUG}_MINOR		:= 1
+${SLUG}_PATCH		:= 0
+${SLUG}_VERSION		:= \$(${SLUG}_MAJOR).\$(${SLUG}_MINOR).\$(${SLUG}_PATCH)
 
-. "\$ROOT/toolchain.sh"
+${SLUG}_FLAGS		:= \\
+			   \$(CFLAGS)						\\
+			   \$(CPPFLAGS)						\\
+			   -D${SLUG}_VERSION_MAJOR="\"\$(${SLUG}_MAJOR)"\"	\\
+			   -D${SLUG}_VERSION_MINOR="\"\$(${SLUG}_MINOR)"\"	\\
+			   -D${SLUG}_VERSION_PATCH="\"\$(${SLUG}_PATCH)"\"	\\
+			   -D${SLUG}_VERSION="\"\$(${SLUG}_VERSION)"\"		\\
+			   -I$NAME/include					\\
+			   \$(LDFLAGS)
 
-TARGET="$NAME"
+${SLUG}_TEST_FLAGS	:= \\
+			   \$(CFLAGS)						\\
+			   \$(CPPFLAGS)						\\
+			   -I$NAME/include					\\
+			   \$(LDFLAGS)
 
-TARGET_VER_MAJOR="0"
-TARGET_VER_MINOR="1"
-TARGET_VER_PATCH="0"
-TARGET_VER="\$TARGET_VER_MAJOR.\$TARGET_VER_MINOR.\$TARGET_VER_PATCH"
+${SLUG}_SOURCES		:= $NAME/src/unity.c
+${SLUG}_OBJECTS		:= \$(${SLUG}_SOURCES:%.c=\$(OBJ)/%.c.o)
 
-TARGET_FLAGS="
-	\$CFLAGS
+${SLUG}_TEST_SOURCES	:= $NAME/tests/test_$NAME.c
+${SLUG}_TEST_OBJECTS	:= \$(${SLUG}_TEST_SOURCES:%.c=\$(TST)/%.x)
 
-	\$CPPFLAGS
-	-D${SLUG}_VERSION_MAJOR="\"\$TARGET_VER_MAJOR\""
-	-D${SLUG}_VERSION_MINOR="\"\$TARGET_VER_MINOR\""
-	-D${SLUG}_VERSION_PATCH="\"\$TARGET_VER_PATCH\""
-	-D${SLUG}_VERSION="\"\$TARGET_VER\""
-	-I\$TARGET_ROOT/include
-	
-	\$LDFLAGS
-"
+\$(${SLUG}_OBJECTS): \$(OBJ)/%.c.o: %.c | \$(OBJ)
+	@mkdir -p \$(shell dirname \$@)
+	\$(CC) -o \$@ -c \$< \$(${SLUG}_FLAGS)
 
-TARGET_TEST_FLAGS="
-	\$CFLAGS
+\$(${SLUG}_TEST_OBJECTS): \$(TST)/%.x: %.c | \$(TST)
+	@mkdir -p \$(shell dirname \$@)
+	\$(CC) -static -o \$@ \$< \$(${SLUG}_TEST_FLAGS)
 
-	\$CPPFLAGS
-	-I\$TARGET_ROOT/include
+\$(BIN)/$NAME: $NAME-deps \$(${SLUG}_OBJECTS) | \$(BIN)
+	@mkdir -p \$(shell dirname \$@)
+	\$(CC) -o \$@ \$(${SLUG}_OBJECTS) \$(${SLUG}_FLAGS)
 
-	\$LDFLAGS
-"
+$NAME-deps:
+
+$NAME-build: \$(BIN)/$NAME
+
+$NAME-test: \$(${SLUG}_TEST_OBJECTS)
+	@for f in \$(${SLUG}_TEST_OBJECTS); do ./\$\$f ; done
+
+$NAME: $NAME-build $NAME-test
 EOF
 
-cat >$NAME/build.sh <<EOF
-#!/bin/sh
+cat >config.mk <<'EOF'
+## toolchain
+CC		?= cc
+AR		?= ar
+RANLIB		?= ranlib
 
-set -e
+STRIP		?= strip
 
-. "\$TARGET_ROOT/common.sh"
+TAR		?= tar
+ZIP		?= gzip
 
-TARGET_SOURCES="
-	\$TARGET_ROOT/src/unity.c
-"
+## project build directories
+BIN		:= bin
+OBJ		:= obj
+LIB		:= lib
+TST		:= $(BIN)/tests
 
-TARGET_OBJECTS="\$(OBJECTS "\$TARGET_FLAGS" \$TARGET_SOURCES)"
+$(BIN):
+	@mkdir -p $(BIN)
 
-EXEC "\$CC" -o "\$BIN/\$TARGET" \$TARGET_OBJECTS \$TARGET_FLAGS
-EOF
+$(OBJ):
+	@mkdir -p $(OBJ)
 
-cat >$NAME/test.sh <<EOF
-#!/bin/sh
+$(LIB):
+	@mkdir -p $(LIB)
 
-set -e
+$(TST): $(BIN)
+	@mkdir -p $(TST)
 
-. "\$TARGET_ROOT/common.sh"
-
-TARGET_TESTS="
-	\$TARGET_ROOT/tests/test_$NAME.c
-"
-
-TESTS "\$TARGET_TEST_FLAGS" \$TARGET_TESTS
-EOF
-
-## template in build system
-
-cat >common.sh <<'EOF'
-#!/bin/sh
-
-set -e
-
-[ "${COMMON_INCLUDE_GUARD:-z}" = "z" ] && COMMON_INCLUDE_GUARD=1
-
-[ $DRYRUN ] && VERBOSE=1
-
-ROOT="$(dirname $0)"
-
-INC="$ROOT/include"
-
-BIN="$ROOT/bin"
-LIB="$ROOT/lib"
-OBJ="$ROOT/obj"
-
-TESTS="$BIN/tests"
-
-## set up artefact directories if they don't exist
-[ -d "$BIN" ] || mkdir "$BIN"
-[ -d "$LIB" ] || mkdir "$LIB"
-[ -d "$OBJ" ] || mkdir "$OBJ"
-
-## Resets the current toolchain environment to the given toolchain's defaults
-## Usage:
-##   TOOLCHAIN <toolchain-id>
-TOOLCHAIN() {
-	. "$ROOT/toolchain-$1.sh"
-}
-
-## Echoes out the flags associated with the current REGIME and given flag root
-## Requires:
-##   REGIME
-## Usage:
-##   REGIME <flag-root>
-REGIME() {
-	eval "echo \$${REGIME:-DEBUG}_$1"
-}
-
-## Logs the given message to stdout
-## Usage:
-##   LOG <msg...>
-LOG() {
-	printf "%s\n" "$*"
-}
-
-## Logs the given message to stderr
-## Usage:
-##   ELOG <msg...>
-ELOG() {
-	printf "%s\n" "$*" >&2
-}
-
-## Executes the given command
-## Usage:
-##   EXEC <cmd...>
-EXEC() {
-	[ $VERBOSE ] && ELOG $@; [ $DRYRUN ] || $@
-}
-
-## Echoes out the LDFLAGS for the given library
-## Usage:
-##   LIB <library> [pkgconf opts...]
-LIB() {
-	pkgconf --libs $@
-}
-
-## Echoes out the CPPFLAGS for the given library
-## Usage:
-##   INC <library> [pkgconf opts...]
-INC() {
-	pkgconf --cflags $@
-}
-
-## Compiles all given sources into objects
-## Requires:
-##   CC OBJ
-## Overwrites:
-##   __OBJ_FLAGS __SRC
-## Usage:
-##   OBJECTS "<flag...>" <src...>
-OBJECTS() {
-	__OBJ_FLAGS="$1"
-	shift 1
-	for __SRC in $@; do
-		EXEC mkdir -p "$(dirname $OBJ/$__SRC)"
-		EXEC "$CC" -o "$OBJ/$__SRC.o" -c "$__SRC" $__OBJ_FLAGS
-		LOG "$OBJ/$__SRC.o"
-	done
-}
-
-
-## Compiles and executes all tests
-## Requires:
-##   CC TESTS
-## Overwrites:
-##   __SRC __TEST_FLAGS
-## Usage:
-##   TESTS "<flag...>" <test_src...>
-TESTS() {
-	__TEST_FLAGS="$1"
-	shift 1
-	for __SRC in $@; do
-		EXEC mkdir -p "$(dirname "$TESTS/$__SRC")"
-		EXEC "$CC" -static -o "$TESTS/$__SRC.x" "$__SRC" $__TEST_FLAGS
-		EXEC "$TESTS/$__SRC.x"
-	done
-}
-EOF
-
-cat >toolchain.sh <<'EOF'
-#!/bin/sh
-
-set -e
-
-[ "${COMMON_INCLUDE_GUARD:-z}" = "z" ] && . "$(dirname $0)/common.sh"
-
-## setup toolchain and default toolchain flags (CFLAGS, CPPFLAGS, LDFLAGS)
-TOOLCHAIN "${TOOLCHAIN:-host}"
-
-CC="${CC:-$(which cc)}"
-
-AR="${AR:-$(which ar)}"
-RANLIB="${RANLIB:-$(which ranlib)}"
-
-STRIP="${STRIP:-$(which strip)}"
+## project-wide includes
+INC		:= include
 
 ## append project-wide toolchain flags
-CFLAGS="$CFLAGS -std=c11 -Wall -Wextra -Wpedantic -Werror"
-CPPFLAGS="$CPPFLAGS -I$INC"
-LDFLAGS="$LDFLAGS -L$LIB"
+CFLAGS		:= $(CFLAGS) -std=c11 -Wall -Wextra -Wpedantic -Werror
+CPPFLAGS	:= $(CPPFLAGS) -I$(INC)
+LDFLAGS		:= $(LDFLAGS) -L$(LIB)
 
-DEBUG_CFLAGS="$DEBUG_CFLAGS"
-DEBUG_CPPFLAGS="$DEBUG_CPPFLAGS -UNDEBUG"
-DEBUG_LDFLAGS="$DEBUG_LDFLAGS"
+REGIME		?= DEBUG
 
-RELEASE_CFLAGS="$RELEASE_CFLAGS"
-RELEASE_CPPFLAGS="$RELEASE_CPPFLAGS -DNDEBUG"
-RELEASE_LDFLAGS="$RELEASE_LDFLAGS"
+DEBUG_CFLAGS	:= $(DEBUG_CFLAGS) -Og -ggdb
+DEBUG_CPPFLAGS	:= $(DEBUG_CPPFLAGS) -UNDEBUG
+DEBUG_LDFLAGS	:= $(DEBUG_LDFLAGS)
+
+RELEASE_CFLAGS	:= $(RELEASE_CFLAGS) -O3 -flto
+RELEASE_CPPFLAGS:= $(RELEASE_CPPFLAGS) -DNDEBUG
+RELEASE_LDFLAGS	:= $(RELEASE_LDFLAGS) -flto
 
 ## append regime-specific toolchain flags
-CFLAGS="$CFLAGS $(REGIME CFLAGS)"
-CPPFLAGS="$CPPFLAGS $(REGIME CPPFLAGS)"
-LDFLAGS="$LDFLAGS $(REGIME LDFLAGS)"
-EOF
-
-cat >toolchain-host.sh <<'EOF'
-#!/bin/sh
-
-set -e
-
-CFLAGS=""
-CPPFLAGS=""
-LDFLAGS=""
-
-DEBUG_CFLAGS="-Og -ggdb"
-DEBUG_CPPFLAGS=""
-DEBUG_LDFLAGS=""
-
-RELEASE_CFLAGS="-O3 -flto"
-RELEASE_CPPFLAGS=""
-RELEASE_LDFLAGS="-flto"
-EOF
-
-cat >clean.sh <<'EOF'
-#!/bin/sh
-
-set -e
-
-. "$(dirname $0)/common.sh"
-
-EXEC "rm" -fr "$BIN" "$LIB" "$OBJ"
-EOF
-
-cat >build.sh <<EOF
-#!/bin/sh
-
-set -e
-
-. "\$(dirname \$0)/common.sh"
-
-USAGE() {
-	ELOG "Usage \$0 <target...>"
-	ELOG "  Targets: all $NAME"
-}
-
-BUILD_PROJECT() {
-	LOG "Building project: \$1 \${TOOLCHAIN:+(\$TOOLCHAIN)}"
-	TARGET_ROOT="\$ROOT/\$1" . "\$ROOT/\$1/build.sh"
-}
-
-if [ "\$#" = "0" ]; then
-	ELOG "No target selected!"
-	USAGE
-	exit 1
-fi
-
-for tgt in \$@; do
-	case "\$tgt" in
-		all)
-			TOOLCHAIN="\$TOOLCHAIN" "\$ROOT/build.sh" "$NAME"
-			;;
-		$NAME)
-			BUILD_PROJECT "\$tgt"
-			;;
-		*)
-			ELOG "Unknown project: \$tgt"
-			USAGE
-			exit 1
-			;;
-	esac
-done
-EOF
-
-cat >test.sh <<EOF
-#!/bin/sh
-
-set -e
-
-. "\$(dirname \$0)/common.sh"
-
-USAGE() {
-	ELOG "Usage \$0 <target...>"
-	ELOG "  Targets: all $NAME"
-}
-
-TEST_PROJECT() {
-	LOG "Testing project: \$1 \${TOOLCHAIN:+(\$TOOLCHAIN)}"
-	TARGET_ROOT="\$ROOT/\$1" . "\$ROOT/\$1/test.sh"
-}
-
-if [ "\$#" = "0" ]; then
-	ELOG "No target selected!"
-	USAGE
-	exit 1
-fi
-
-for tgt in \$@; do
-	case "\$tgt" in
-		all)
-			TOOLCHAIN="\$TOOLCHAIN" "\$ROOT/test.sh" "$NAME"
-			;;
-		$NAME)
-			TEST_PROJECT "\$tgt"
-			;;
-		*)
-			ELOG "Unknown project: \$tgt"
-			USAGE
-			exit 1
-			;;
-	esac
-done
+CFLAGS		:= $(CFLAGS) $($(REGIME)_CFLAGS)
+CPPFLAGS	:= $(CPPFLAGS) $($(REGIME)_CPPFLAGS)
+LDFLAGS		:= $(LDFLAGS) $($(REGIME)_LDFLAGS)
 EOF
 
 cat >Makefile <<EOF
 .PHONY: all build clean test
 
-PROJECTS	:= $NAME
-
 all: build test
 
+include config.mk
+
 clean:
-	./clean.sh
+	rm -fr \$(BIN) \$(LIB) \$(OBJ)
 
-build: clean
-	./build.sh all
+build: $NAME-build
 
-test: clean
-	./test.sh all
+test: $NAME-test
 
-## project targets
-\${PROJECTS}: clean
-	./build.sh \$@
-	./test.sh \$@
+include $NAME/makefile.mk
 EOF
-
-## fix up permissions on shell scripts
-chmod +x clean.sh build.sh test.sh
 
 cd "$ROOT"
