@@ -116,18 +116,43 @@ cat >include/common.h <<'EOF'
 #ifndef COMMON_H
 #define COMMON_H
 
-#include <assert.h>
-#include <float.h>
-#include <limits.h>
-#include <setjmp.h>
-#include <stdalign.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <stdnoreturn.h>
+#ifdef __CPLUSPLUS
+extern "C" {
+#endif /* __CPLUSPLUS */
+
+#ifdef __CPLUSPLUS
+	#include <cassert>
+	#include <cerrno>
+	#include <cfloat>
+	#include <climits>
+	#include <csetjmp>
+	#include <cstdalign>
+	#include <cstdatomic>
+	#include <cstdarg>
+	#include <cstdbool>
+	#include <cstddef>
+	#include <cstdint>
+	#include <cstdio>
+	#include <cstdlib>
+	#include <cstdnoreturn>
+	#include <cstring>
+#else
+	#include <assert.h>
+	#include <errno.h>
+	#include <float.h>
+	#include <limits.h>
+	#include <setjmp.h>
+	#include <stdalign.h>
+	#include <stdatomic.h>
+	#include <stdarg.h>
+	#include <stdbool.h>
+	#include <stddef.h>
+	#include <stdint.h>
+	#include <stdio.h>
+	#include <stdlib.h>
+	#include <stdnoreturn.h>
+	#include <string.h>
+#endif
 
 typedef int32_t b32;
 
@@ -144,12 +169,62 @@ typedef int64_t s64;
 typedef float f32;
 typedef double f64;
 
-#define ALLOC_OVERFLOWS(type, count) ((UINT_MAX / sizeof(type)) < (count))
+#define KiB 1024ULL
+#define MiB 1024 * KiB
+#define GiB 1024 * MiB
+
 #define ARRLEN(arr) (sizeof(arr) / sizeof((arr)[0]))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
-#define errlog(...) fprintf(stderr, __VA_ARGS__)
+#define RELPTR_MASK(relptr_ty) ((relptr_ty)1 << ((sizeof(relptr_ty) * 8) - 1))
+#define RELPTR_NULL (0)
+
+#define RELPTR_ENC(relptr_ty, ptroff) \
+	((relptr_ty)((ptroff) ^ RELPTR_MASK(relptr_ty)))
+
+#define RELPTR_DEC(relptr_ty, relptr) \
+	((relptr_ty)((relptr) ^ RELPTR_MASK(relptr_ty)))
+
+#define RELPTR_ABS2REL(relptr_ty, base, absptr) \
+	((absptr) \
+	? RELPTR_ENC(relptr_ty, (u8*)absptr - (u8*)base) \
+	: RELPTR_NULL)
+
+#define RELPTR_REL2ABS(absptr_ty, relptr_ty, base, relptr) \
+	((relptr) \
+	? ((absptr_ty)((u8*)base + RELPTR_DEC(relptr_ty, relptr))) \
+	: NULL)
+
+#define errloc() fprintf(stderr, "%s:%d:%s: ", __FILE__, __LINE__, __func__);
+
+#define errlog(...) \
+do { \
+	errloc(); \
+	fprintf(stderr, __VA_ARGS__); \
+	fprintf(stderr, "\n"); \
+	fflush(stderr); \
+} while (0);
+
+#define unreachable(...) \
+do { \
+	errloc(); \
+	fprintf(stderr, "UNREACHABLE: "); \
+	fprintf(stderr, __VA_ARGS__); \
+	fprintf(stderr, "\n"); \
+	fflush(stderr); \
+	abort(); \
+} while (0);
+
+#define unimplemented(...) \
+do { \
+	errloc(); \
+	fprintf(stderr, "UNIMPLEMENTED: "); \
+	fprintf(stderr, __VA_ARGS__); \
+	fprintf(stderr, "\n"); \
+	fflush(stderr); \
+	abort(); \
+} while (0);
 
 #ifndef NDEBUG
 	#define dbglog(...) errlog(__VA_ARGS__)
@@ -157,7 +232,163 @@ typedef double f64;
 	#define dbglog(...)
 #endif
 
+#ifdef __CPLUSPLUS
+};
+#endif /* __CPLUSPLUS */
+
 #endif /* COMMON_H */
+EOF
+
+cat >include/utils.h <<'EOF'
+#ifndef UTILS_H
+#define UTILS_H
+
+#include "common.h"
+
+#ifdef __CPLUSPLUS
+extern "C" {
+#endif /* __CPLUSPLUS */
+
+struct str_view {
+	char *ptr;
+	u64 len;
+};
+
+static inline bool
+str_view_equal(struct str_view a, struct str_view b) {
+	return a.len == b.len && strncmp(a.ptr, b.ptr, a.len) == 0;
+}
+
+#define CONST_CSTR_SV(ccstr) \
+	((struct str_view){ .ptr = ccstr, .len = sizeof(ccstr) - 1, })
+
+#define CSTR_SV(cstr) \
+	((struct str_view){ .ptr = cstr, .len = strlen(cstr), })
+
+struct mem_stream {
+	u8 *ptr;
+	u64 cur, len;
+};
+
+static inline bool
+mem_stream_eof(struct mem_stream *self) {
+	assert(self);
+
+	return self->len == self->cur;
+}
+
+static inline u8 *
+mem_stream_headptr(struct mem_stream *self) {
+	assert(self);
+
+	return self->ptr + self->cur;
+}
+
+static inline bool
+mem_stream_skip(struct mem_stream *self, u64 len) {
+	assert(self);
+
+	if (self->len - self->cur < len)
+		return false;
+
+	self->cur += len;
+
+	return true;
+}
+
+static inline bool
+mem_stream_peek(struct mem_stream *self, u64 off, void *buf, u64 len) {
+	assert(self);
+	assert(buf);
+
+	if (self->len - off - self->cur < len)
+		return false;
+
+	memcpy(buf, self->ptr + self->cur + off, len);
+
+	return true;
+}
+
+static inline bool
+mem_stream_consume(struct mem_stream *self, void *buf, u64 len) {
+	assert(self);
+	assert(buf);
+
+	return mem_stream_peek(self, 0, buf, len) && mem_stream_skip(self, len);
+}
+
+struct mem_pool {
+	u8 *ptr;
+	u64 cap, len;
+};
+
+static inline bool
+mem_pool_resize(struct mem_pool *self, u64 capacity) {
+	assert(self);
+
+	u8 *ptr = realloc(self->ptr, capacity);
+	if (!ptr) return false;
+
+	self->ptr = ptr;
+	self->cap = capacity;
+
+	return true;
+}
+
+static inline bool
+mem_pool_init(struct mem_pool *self, u64 capacity) {
+	assert(self);
+
+	self->ptr = NULL;
+	self->cap = self->len = 0;
+
+	return mem_pool_resize(self, capacity);
+}
+
+static inline void
+mem_pool_free(struct mem_pool *self) {
+	assert(self);
+
+	free(self->ptr);
+}
+
+static inline void
+mem_pool_reset(struct mem_pool *self) {
+	assert(self);
+
+	self->len = 0;
+}
+
+static inline bool
+mem_pool_prealloc(struct mem_pool *self, u64 size) {
+	assert(self);
+
+	return self->len + size <= self->cap || mem_pool_resize(self, self->len + size);
+}
+
+static inline void *
+mem_pool_alloc(struct mem_pool *self, u64 alignment, u64 size) {
+	assert(self);
+	assert(alignment);
+	assert(alignment == 1 || alignment % 2 == 0);
+
+	u64 alignment_off = alignment - 1;
+	u64 aligned_len = (self->len + alignment_off) & ~alignment_off;
+
+	if (!mem_pool_prealloc(self, (aligned_len - self->len) + size))
+		return NULL;
+
+	void *ptr = self->ptr + aligned_len;
+	self->len = aligned_len + size;
+
+	return ptr;
+}
+
+#ifdef __CPLUSPLUS
+};
+#endif /* __CPLUSPLUS */
+
+#endif /* UTILS_H */
 EOF
 
 cat >include/test.h <<'EOF'
@@ -166,37 +397,39 @@ cat >include/test.h <<'EOF'
 
 #include "common.h"
 
+#ifdef __CPLUSPLUS
+extern "C" {
+#endif /* __CPLUSPLUS */
+
 #define TEST_PASS() return 1;
 #define TEST_FAIL() return 0;
-
-#define TEST(name, body)							\
-s32										\
-name(void) {									\
-	s32 __##name##_result = 1; body; return __##name##_result;		\
-}
 
 #define TESTS_BEGIN() s32 __test_suite_result = 0;
 #define TESTS_END() return __test_suite_result;
 
-#define TEST_RUN(name)								\
-{										\
-	errlog("%s:%s:\n", __FILE__, #name);					\
-	if (name()) {								\
-		errlog("%s:%s: OK\n", __FILE__, #name);				\
-	} else {								\
-		errlog("%s:%s: FAILED\n", __FILE__, #name);			\
-		__test_suite_result = 1;					\
-	}									\
-}
+#define TEST_RUN(name) \
+do { \
+	errlog("%s:%s:", __FILE__, #name); \
+	if (name()) { \
+		errlog("%s:%s: OK", __FILE__, #name); \
+	} else { \
+		errlog("%s:%s: FAILED", __FILE__, #name); \
+		__test_suite_result = 1; \
+	} \
+} while (0);
 
-#define _TEST_ASSERT_IMPL(cond, msg)						\
+#define _TEST_ASSERT_IMPL(cond, msg) \
 errlog("[%s:%d] %s: %s\n", __func__, __LINE__, #cond, msg)
 
-#define TEST_ASSERT(cond, msg)							\
+#define TEST_ASSERT(cond, msg) \
 if (!(cond)) { _TEST_ASSERT_IMPL(cond, msg); TEST_FAIL() }
 
-#define TEST_EXPECT(cond, msg)							\
+#define TEST_EXPECT(cond, msg) \
 if (!(cond)) { _TEST_ASSERT_IMPL(cond, msg); }
+
+#ifdef __CPLUSPLUS
+};
+#endif /* __CPLUSPLUS */
 
 #endif /* TEST_H */
 EOF
@@ -227,22 +460,19 @@ main(s32 argc, char **argv) {
 }
 EOF
 
-cat >$NAME/src/unity.c <<EOF
-#include "$NAME.c"
-EOF
-
 cat >$NAME/tests/test_$NAME.c <<EOF
 #include "test.h"
 #include "$NAME.h"
 
-TEST(test_example, {
+s32
+test_example(void) {
 	int a = 42;
 
 	TEST_EXPECT(a + 2 == 44, "a + 2 != 44")
 	TEST_ASSERT(a == 42, "a != 42")
 
 	TEST_PASS()
-})
+}
 
 s32
 main(s32 argc, char **argv) {
@@ -258,50 +488,74 @@ main(s32 argc, char **argv) {
 EOF
 
 cat >$NAME/makefile.mk <<EOF
-.PHONY: $NAME $NAME-build $NAME-deps $NAME-test
+.PHONY: $NAME $NAME-build $NAME-test
 
 ${SLUG}_MAJOR		:= 0
 ${SLUG}_MINOR		:= 1
 ${SLUG}_PATCH		:= 0
 ${SLUG}_VERSION		:= \$(${SLUG}_MAJOR).\$(${SLUG}_MINOR).\$(${SLUG}_PATCH)
 
+${SLUG}_CFLAGS		:= \\
+			   \$(CFLAGS) \\
+			   \$(CPPFLAGS) \\
+			   -D${SLUG}_VERSION_MAJOR="\"\$(${SLUG}_MAJOR)"\" \\
+			   -D${SLUG}_VERSION_MINOR="\"\$(${SLUG}_MINOR)"\" \\
+			   -D${SLUG}_VERSION_PATCH="\"\$(${SLUG}_PATCH)"\" \\
+			   -D${SLUG}_VERSION="\"\$(${SLUG}_VERSION)"\" \\
+			   -I$NAME/include
+
 ${SLUG}_FLAGS		:= \\
-			   \$(CFLAGS)						\\
-			   \$(CPPFLAGS)						\\
-			   -D${SLUG}_VERSION_MAJOR="\"\$(${SLUG}_MAJOR)"\"	\\
-			   -D${SLUG}_VERSION_MINOR="\"\$(${SLUG}_MINOR)"\"	\\
-			   -D${SLUG}_VERSION_PATCH="\"\$(${SLUG}_PATCH)"\"	\\
-			   -D${SLUG}_VERSION="\"\$(${SLUG}_VERSION)"\"		\\
-			   -I$NAME/include					\\
+			   \$(${SLUG}_CFLAGS) \\
 			   \$(LDFLAGS)
 
-${SLUG}_TEST_FLAGS	:= \\
-			   \$(CFLAGS)						\\
-			   \$(CPPFLAGS)						\\
-			   -I$NAME/include					\\
-			   \$(LDFLAGS)
+${SLUG}_SOURCES		:= $NAME/src/$NAME.c
 
-${SLUG}_SOURCES		:= $NAME/src/unity.c
 ${SLUG}_OBJECTS		:= \$(${SLUG}_SOURCES:%.c=\$(OBJ)/%.c.o)
+${SLUG}_OBJDEPS		:= \$(${SLUG}_OBJECTS:%.o=%.d)
+
+-include \$(${SLUG}_OBJDEPS)
 
 ${SLUG}_TEST_SOURCES	:= $NAME/tests/test_$NAME.c
+
 ${SLUG}_TEST_OBJECTS	:= \$(${SLUG}_TEST_SOURCES:%.c=\$(TST)/%.x)
 
 \$(${SLUG}_OBJECTS): \$(OBJ)/%.c.o: %.c | \$(OBJ)
-	@mkdir -p \$(shell dirname \$@)
-	\$(CC) -o \$@ -c \$< \$(${SLUG}_FLAGS)
+	@mkdir -p \$(dir \$@)
+	\$(CC) -MMD -o \$@ -c \$< \$(${SLUG}_CFLAGS)
 
-\$(${SLUG}_TEST_OBJECTS): \$(TST)/%.x: %.c | \$(TST)
-	@mkdir -p \$(shell dirname \$@)
-	\$(CC) -static -o \$@ \$< \$(${SLUG}_TEST_FLAGS)
+\$(${SLUG}_TEST_OBJECTS): \$(TST)/%.x: $NAME-test-deps %.c | \$(TST)
+	@mkdir -p \$(dir \$@)
+	\$(CC) -static -o \$@ \$(word 2,\$^) \$(${SLUG}_FLAGS)
 
 \$(BIN)/$NAME: $NAME-deps \$(${SLUG}_OBJECTS) | \$(BIN)
-	@mkdir -p \$(shell dirname \$@)
-	\$(CC) -o \$@ \$(${SLUG}_OBJECTS) \$(${SLUG}_FLAGS)
+	@mkdir -p \$(dir \$@)
+	\$(CC) -o \$@ \$(wordlist 2,\$(words \$^),\$^) \$(${SLUG}_FLAGS)
+
+#\$(LIB)/lib$NAME.\$(${SLUG}_VERSION).a: $NAME-deps \$(${SLUG}_OBJECTS) | \$(LIB)
+#	@mkdir -p \$(dir \$@)
+#	\$(AR) -rcs \$@ \$(wordlist 2,\$(words \$^),\$^)
+#
+#\$(LIB)/lib$NAME.\$(${SLUG}_MAJOR).a: \$(LIB)/lib$NAME.\$(${SLUG}_VERSION).a
+#	ln -sf \$(notdir \$<) \$@
+#
+#\$(LIB)/lib$NAME.a: \$(LIB)/lib$NAME.\$(${SLUG}_MAJOR).a
+#	ln -sf \$(notdir \$<) \$@
+#
+#\$(LIB)/lib$NAME.\$(${SLUG}_VERSION).so: $NAME-deps \$(${SLUG}_OBJECTS) | \$(LIB)
+#	@mkdir -p \$(dir \$@)
+#	\$(CC) -shared -o \$@ \$(wordlist 2,\$(words \$^),\$^) \$(${SLUG}_FLAGS)
+#
+#\$(LIB)/lib$NAME.\$(${SLUG}_MAJOR).so: \$(LIB)/lib$NAME.\$(${SLUG}_VERSION).so
+#	ln -sf \$(notdir \$<) \$@
+#
+#\$(LIB)/lib$NAME.so: \$(LIB)/lib$NAME.\$(${SLUG}_MAJOR).so
+#	ln -sf \$(notdir \$<) \$@
 
 $NAME-deps:
 
 $NAME-build: \$(BIN)/$NAME
+
+$NAME-test-deps:
 
 $NAME-test: \$(${SLUG}_TEST_OBJECTS)
 	@for f in \$(${SLUG}_TEST_OBJECTS); do ./\$\$f ; done
@@ -312,6 +566,7 @@ EOF
 cat >config.mk <<'EOF'
 ## toolchain
 CC		?= cc
+CXX		?= c++
 AR		?= ar
 RANLIB		?= ranlib
 
@@ -343,7 +598,7 @@ INC		:= include
 
 ## append project-wide toolchain flags
 CFLAGS		:= $(CFLAGS) -std=c11 -Wall -Wextra -Wpedantic -Werror
-CPPFLAGS	:= $(CPPFLAGS) -I$(INC)
+CPPFLAGS	:= $(CPPFLAGS) -I$(INC) -D_XOPEN_SOURCE=700
 LDFLAGS		:= $(LDFLAGS) -L$(LIB)
 
 REGIME		?= DEBUG
