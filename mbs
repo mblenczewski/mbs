@@ -1,25 +1,13 @@
 #!/bin/sh
 
-##############################################################################
-# MBS (Miko's Build System)
-# ----------------------------------------------------------------------------
-# This script sets up a simple, monorepo layout for building a single project
-# or a suite of related projects (think LLVM repository structure). The actual
-# build system is a set of dumb POSIX shell scripts that orchestrates building
-# a set of top-level projects from scratch, with each project building its
-# dependencies as required. Yes, this wastes some processor time on rebuilding
-# objects and binaries that have already been compiled once. No, its never
-# been an issue for me at the scale that I write toy software :)
-# ----------------------------------------------------------------------------
-# This script sets up a single C project, using the host toolchain, and a set
-# of shell scripts that implement cleaning, building, and testing the single
-# project. There is also a simple wrapper Makefile for convenience.
-##############################################################################
-
 set -e
 
-SLUGIFY() {
+REPONAME() {
 	echo $1 | tr '[:blank:]' '-'
+}
+
+SLUGIFY() {
+	echo $1 | tr '[:punct:]' '_'
 }
 
 UPPERCASE() {
@@ -38,8 +26,8 @@ USAGE() {
 [ "${1:-z}" = "z" ] && ( USAGE; exit 1 )
 
 ROOT="$(pwd)"
-NAME="$(SLUGIFY $1)"
-SLUG="$(UPPERCASE $NAME)"
+NAME="$(REPONAME $1)"
+SLUG="$(SLUGIFY $(UPPERCASE $NAME))"
 
 if [ -d "$ROOT/$NAME" ]; then
 	ELOG "Target folder $ROOT/$NAME already exists!";
@@ -54,7 +42,6 @@ cd "$ROOT/$NAME"
 DIRS="
 	$NAME $NAME/src $NAME/include $NAME/tests
 	docs docs/$NAME
-	include
 "
 
 mkdir $DIRS
@@ -65,8 +52,12 @@ root = true
 
 [*]
 end_of_line = lf
-insert_final_newline = true
 charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+# visual studio editorconfig plugin specific settings
+guidelines = 80, 120, 160
 
 [*.{c,cpp,h,hpp,tpp}]
 indent_style = tab
@@ -110,329 +101,8 @@ EOF
 
 touch LICENSE.txt
 
-## template in common code files
-
-cat >include/common.h <<'EOF'
-#ifndef COMMON_H
-#define COMMON_H
-
-#ifdef __CPLUSPLUS
-extern "C" {
-#endif /* __CPLUSPLUS */
-
-#ifdef __CPLUSPLUS
-	#include <cassert>
-	#include <cerrno>
-	#include <cfloat>
-	#include <climits>
-	#include <csetjmp>
-	#include <cstdalign>
-	#include <cstdatomic>
-	#include <cstdarg>
-	#include <cstdbool>
-	#include <cstddef>
-	#include <cstdint>
-	#include <cstdio>
-	#include <cstdlib>
-	#include <cstdnoreturn>
-	#include <cstring>
-#else
-	#include <assert.h>
-	#include <errno.h>
-	#include <float.h>
-	#include <limits.h>
-	#include <setjmp.h>
-	#include <stdalign.h>
-	#include <stdatomic.h>
-	#include <stdarg.h>
-	#include <stdbool.h>
-	#include <stddef.h>
-	#include <stdint.h>
-	#include <stdio.h>
-	#include <stdlib.h>
-	#include <stdnoreturn.h>
-	#include <string.h>
-#endif
-
-typedef int32_t b32;
-
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef uint64_t u64;
-
-typedef int8_t s8;
-typedef int16_t s16;
-typedef int32_t s32;
-typedef int64_t s64;
-
-typedef float f32;
-typedef double f64;
-
-#define KiB 1024ULL
-#define MiB 1024 * KiB
-#define GiB 1024 * MiB
-
-#define ARRLEN(arr) (sizeof(arr) / sizeof((arr)[0]))
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-
-#define RELPTR_MASK(relptr_ty) ((relptr_ty)1 << ((sizeof(relptr_ty) * 8) - 1))
-#define RELPTR_NULL (0)
-
-#define RELPTR_ENC(relptr_ty, ptroff) \
-	((relptr_ty)((ptroff) ^ RELPTR_MASK(relptr_ty)))
-
-#define RELPTR_DEC(relptr_ty, relptr) \
-	((relptr_ty)((relptr) ^ RELPTR_MASK(relptr_ty)))
-
-#define RELPTR_ABS2REL(relptr_ty, base, absptr) \
-	((absptr) \
-	? RELPTR_ENC(relptr_ty, (u8*)absptr - (u8*)base) \
-	: RELPTR_NULL)
-
-#define RELPTR_REL2ABS(absptr_ty, relptr_ty, base, relptr) \
-	((relptr) \
-	? ((absptr_ty)((u8*)base + RELPTR_DEC(relptr_ty, relptr))) \
-	: NULL)
-
-#define errloc() fprintf(stderr, "%s:%d:%s: ", __FILE__, __LINE__, __func__);
-
-#define errlog(...) \
-do { \
-	errloc(); \
-	fprintf(stderr, __VA_ARGS__); \
-	fprintf(stderr, "\n"); \
-	fflush(stderr); \
-} while (0);
-
-#define unreachable(...) \
-do { \
-	errloc(); \
-	fprintf(stderr, "UNREACHABLE: "); \
-	fprintf(stderr, __VA_ARGS__); \
-	fprintf(stderr, "\n"); \
-	fflush(stderr); \
-	abort(); \
-} while (0);
-
-#define unimplemented(...) \
-do { \
-	errloc(); \
-	fprintf(stderr, "UNIMPLEMENTED: "); \
-	fprintf(stderr, __VA_ARGS__); \
-	fprintf(stderr, "\n"); \
-	fflush(stderr); \
-	abort(); \
-} while (0);
-
-#ifndef NDEBUG
-	#define dbglog(...) errlog(__VA_ARGS__)
-#else
-	#define dbglog(...)
-#endif
-
-#ifdef __CPLUSPLUS
-};
-#endif /* __CPLUSPLUS */
-
-#endif /* COMMON_H */
-EOF
-
-cat >include/utils.h <<'EOF'
-#ifndef UTILS_H
-#define UTILS_H
-
-#include "common.h"
-
-#ifdef __CPLUSPLUS
-extern "C" {
-#endif /* __CPLUSPLUS */
-
-struct str_view {
-	char *ptr;
-	u64 len;
-};
-
-static inline bool
-str_view_equal(struct str_view a, struct str_view b) {
-	return a.len == b.len && strncmp(a.ptr, b.ptr, a.len) == 0;
-}
-
-#define CONST_CSTR_SV(ccstr) \
-	((struct str_view){ .ptr = ccstr, .len = sizeof(ccstr) - 1, })
-
-#define CSTR_SV(cstr) \
-	((struct str_view){ .ptr = cstr, .len = strlen(cstr), })
-
-struct mem_stream {
-	u8 *ptr;
-	u64 cur, len;
-};
-
-static inline bool
-mem_stream_eof(struct mem_stream *self) {
-	assert(self);
-
-	return self->len == self->cur;
-}
-
-static inline u8 *
-mem_stream_headptr(struct mem_stream *self) {
-	assert(self);
-
-	return self->ptr + self->cur;
-}
-
-static inline bool
-mem_stream_skip(struct mem_stream *self, u64 len) {
-	assert(self);
-
-	if (self->len - self->cur < len)
-		return false;
-
-	self->cur += len;
-
-	return true;
-}
-
-static inline bool
-mem_stream_peek(struct mem_stream *self, u64 off, void *buf, u64 len) {
-	assert(self);
-	assert(buf);
-
-	if (self->len - off - self->cur < len)
-		return false;
-
-	memcpy(buf, self->ptr + self->cur + off, len);
-
-	return true;
-}
-
-static inline bool
-mem_stream_consume(struct mem_stream *self, void *buf, u64 len) {
-	assert(self);
-	assert(buf);
-
-	return mem_stream_peek(self, 0, buf, len) && mem_stream_skip(self, len);
-}
-
-struct mem_pool {
-	u8 *ptr;
-	u64 cap, len;
-};
-
-static inline bool
-mem_pool_resize(struct mem_pool *self, u64 capacity) {
-	assert(self);
-
-	u8 *ptr = realloc(self->ptr, capacity);
-	if (!ptr) return false;
-
-	self->ptr = ptr;
-	self->cap = capacity;
-
-	return true;
-}
-
-static inline bool
-mem_pool_init(struct mem_pool *self, u64 capacity) {
-	assert(self);
-
-	self->ptr = NULL;
-	self->cap = self->len = 0;
-
-	return mem_pool_resize(self, capacity);
-}
-
-static inline void
-mem_pool_free(struct mem_pool *self) {
-	assert(self);
-
-	free(self->ptr);
-}
-
-static inline void
-mem_pool_reset(struct mem_pool *self) {
-	assert(self);
-
-	self->len = 0;
-}
-
-static inline bool
-mem_pool_prealloc(struct mem_pool *self, u64 size) {
-	assert(self);
-
-	return self->len + size <= self->cap || mem_pool_resize(self, self->len + size);
-}
-
-static inline void *
-mem_pool_alloc(struct mem_pool *self, u64 alignment, u64 size) {
-	assert(self);
-	assert(alignment);
-	assert(alignment == 1 || alignment % 2 == 0);
-
-	u64 alignment_off = alignment - 1;
-	u64 aligned_len = (self->len + alignment_off) & ~alignment_off;
-
-	if (!mem_pool_prealloc(self, (aligned_len - self->len) + size))
-		return NULL;
-
-	void *ptr = self->ptr + aligned_len;
-	self->len = aligned_len + size;
-
-	return ptr;
-}
-
-#ifdef __CPLUSPLUS
-};
-#endif /* __CPLUSPLUS */
-
-#endif /* UTILS_H */
-EOF
-
-cat >include/test.h <<'EOF'
-#ifndef TEST_H
-#define TEST_H
-
-#include "common.h"
-
-#ifdef __CPLUSPLUS
-extern "C" {
-#endif /* __CPLUSPLUS */
-
-#define TEST_PASS() return 1;
-#define TEST_FAIL() return 0;
-
-#define TESTS_BEGIN() s32 __test_suite_result = 0;
-#define TESTS_END() return __test_suite_result;
-
-#define TEST_RUN(name) \
-do { \
-	errlog("%s:%s:", __FILE__, #name); \
-	if (name()) { \
-		errlog("%s:%s: OK", __FILE__, #name); \
-	} else { \
-		errlog("%s:%s: FAILED", __FILE__, #name); \
-		__test_suite_result = 1; \
-	} \
-} while (0);
-
-#define _TEST_ASSERT_IMPL(cond, msg) \
-errlog("[%s:%d] %s: %s\n", __func__, __LINE__, #cond, msg)
-
-#define TEST_ASSERT(cond, msg) \
-if (!(cond)) { _TEST_ASSERT_IMPL(cond, msg); TEST_FAIL() }
-
-#define TEST_EXPECT(cond, msg) \
-if (!(cond)) { _TEST_ASSERT_IMPL(cond, msg); }
-
-#ifdef __CPLUSPLUS
-};
-#endif /* __CPLUSPLUS */
-
-#endif /* TEST_H */
-EOF
+## initialise libmbs submodule
+git submodule add https://github.com/mblenczewski/libmbs
 
 ## template in selected project
 
@@ -440,7 +110,7 @@ cat >$NAME/include/$NAME.h <<EOF
 #ifndef ${SLUG}_H
 #define ${SLUG}_H
 
-#include "common.h"
+#include "libmbs.h"
 
 #endif /* ${SLUG}_H */
 EOF
@@ -453,7 +123,7 @@ main(s32 argc, char **argv) {
 	(void)argc;
 	(void)argv;
 
-	dbglog("Version: " ${SLUG}_VERSION "\n");
+	dbglog("Version: " ${SLUG}_VERSION);
 	printf("Hello, World!\n");
 
 	return 0;
@@ -461,7 +131,7 @@ main(s32 argc, char **argv) {
 EOF
 
 cat >$NAME/tests/test_$NAME.c <<EOF
-#include "test.h"
+#include "libmbs/test.h"
 #include "$NAME.h"
 
 s32
@@ -502,11 +172,11 @@ ${SLUG}_CFLAGS		:= \\
 			   -D${SLUG}_VERSION_MINOR="\"\$(${SLUG}_MINOR)"\" \\
 			   -D${SLUG}_VERSION_PATCH="\"\$(${SLUG}_PATCH)"\" \\
 			   -D${SLUG}_VERSION="\"\$(${SLUG}_VERSION)"\" \\
-			   -I$NAME/include
+			   -I$NAME/include -Ilibmbs/include
 
 ${SLUG}_FLAGS		:= \\
 			   \$(${SLUG}_CFLAGS) \\
-			   \$(LDFLAGS)
+			   \$(LDFLAGS) -lmbs
 
 ${SLUG}_SOURCES		:= $NAME/src/$NAME.c
 
@@ -523,9 +193,9 @@ ${SLUG}_TEST_OBJECTS	:= \$(${SLUG}_TEST_SOURCES:%.c=\$(TST)/%.x)
 	@mkdir -p \$(dir \$@)
 	\$(CC) -MMD -o \$@ -c \$< \$(${SLUG}_CFLAGS)
 
-\$(${SLUG}_TEST_OBJECTS): \$(TST)/%.x: $NAME-test-deps %.c | \$(TST)
+\$(${SLUG}_TEST_OBJECTS): \$(TST)/%.x: $NAME-test-deps %.c \$(${SLUG}_OBJECTS) | \$(TST)
 	@mkdir -p \$(dir \$@)
-	\$(CC) -static -o \$@ \$(word 2,\$^) \$(${SLUG}_FLAGS)
+	\$(CC) -static -o \$@ \$(wordlist 2,\$(words \$^),\$^) \$(${SLUG}_FLAGS)
 
 \$(BIN)/$NAME: $NAME-deps \$(${SLUG}_OBJECTS) | \$(BIN)
 	@mkdir -p \$(dir \$@)
@@ -551,11 +221,11 @@ ${SLUG}_TEST_OBJECTS	:= \$(${SLUG}_TEST_SOURCES:%.c=\$(TST)/%.x)
 #\$(LIB)/lib$NAME.so: \$(LIB)/lib$NAME.\$(${SLUG}_MAJOR).so
 #	ln -sf \$(notdir \$<) \$@
 
-$NAME-deps:
+$NAME-deps: \$(LIB)/libmbs.a
 
 $NAME-build: \$(BIN)/$NAME
 
-$NAME-test-deps:
+$NAME-test-deps: \$(LIB)/libmbs.a
 
 $NAME-test: \$(${SLUG}_TEST_OBJECTS)
 	@for f in \$(${SLUG}_TEST_OBJECTS); do ./\$\$f ; done
@@ -593,12 +263,9 @@ $(LIB):
 $(TST): $(BIN)
 	@mkdir -p $(TST)
 
-## project-wide includes
-INC		:= include
-
 ## append project-wide toolchain flags
 CFLAGS		:= $(CFLAGS) -std=c11 -Wall -Wextra -Wpedantic -Werror
-CPPFLAGS	:= $(CPPFLAGS) -I$(INC) -D_XOPEN_SOURCE=700
+CPPFLAGS	:= $(CPPFLAGS) -D_XOPEN_SOURCE=700
 LDFLAGS		:= $(LDFLAGS) -L$(LIB)
 
 REGIME		?= DEBUG
@@ -631,6 +298,7 @@ build: $NAME-build
 
 test: $NAME-test
 
+include libmbs/makefile.mk
 include $NAME/makefile.mk
 EOF
 
